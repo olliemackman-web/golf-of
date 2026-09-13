@@ -2,7 +2,7 @@
 // the tree collision field the ball physics calls into.
 import * as THREE from 'three';
 import { mulberry32, fbm, smoothstep } from './noise.js';
-import { splineDist, ellipseDist, SURF } from './courseData.js';
+import { splineDist, ellipseDist, SURF, alongHole, ponds } from './courseData.js';
 import { BALL_R } from './physics.js';
 
 const windUniform = { value: 0 };
@@ -97,13 +97,14 @@ export function buildVegetation(course, tex, quality = {}) {
   const field = new TreeField();
   const L = course.layout;
 
+  const sc = L.scenery || null;
   const okSpot = (x, z, minSpline) => {
     if (!course.inBounds(x, z)) return false;
     const { d, t } = splineDist(L, x, z);
     if (d < minSpline) return false;
     const s = course.surfaceAt(x, z);
     if (s.id !== SURF.ROUGH) return false;
-    if (L.pond && ellipseDist(x, z, L.pond) < 1.25) return false;
+    if (ponds(L).some((q) => ellipseDist(x, z, q) < 1.25)) return false;
     if (ellipseDist(x, z, L.green) < 2.2) return false;
     if (Math.hypot(x - L.tee.x, z - L.tee.z) < 14) return false;
     if (Math.hypot(x - L.tee.x, (z - L.tee.z) * 0.6) < 30 && z < L.tee.z) return false; // keep the overhead aim camera behind the tee clear
@@ -112,19 +113,47 @@ export function buildVegetation(course, tex, quality = {}) {
   };
 
   const specs = [];
-  const addTree = (x, z, forceKind) => {
+  const addTree = (x, z, forceKind, o = {}) => {
     const n = fbm(x / 70 + 4, z / 70 - 6, 2);
     const conifer = forceKind != null ? forceKind : (n > 0.15 ? rnd() < 0.75 : rnd() < 0.2);
-    const h = conifer ? 11 + rnd() * 9 : 8 + rnd() * 7;
-    const trunkR = 0.18 + h * 0.022 + rnd() * 0.08;
-    const canopyR = conifer ? h * 0.2 + rnd() * 0.8 : h * 0.36 + rnd() * 1.2;
+    const h = o.h || (conifer ? 11 + rnd() * 9 : 8 + rnd() * 7);
+    const trunkR = o.trunkR || 0.18 + h * 0.022 + rnd() * 0.08;
+    const canopyR = o.canopyR || (conifer ? h * 0.2 + rnd() * 0.8 : h * 0.36 + rnd() * 1.2);
     const y = course.heightAt(x, z) - 0.15;
-    const spec = { x, z, y, h, trunkR, conifer, canopyR, canopyRy: conifer ? h * 0.42 : canopyR * 0.85, canopyY: conifer ? h * 0.55 : h - canopyR * 0.75, trunkH: conifer ? h * 0.3 : h - canopyR, density: conifer ? 0.5 : 0.3, tint: 0.85 + rnd() * 0.3, rot: rnd() * Math.PI * 2 };
-    specs.push(spec); field.add(spec);
+    const spec = { x, z, y, h, trunkR, conifer, canopyR, canopyRy: o.canopyRy || (conifer ? h * 0.42 : canopyR * 0.85), canopyY: o.canopyY != null ? o.canopyY : (conifer ? h * 0.55 : h - canopyR * 0.75), trunkH: o.trunkH || (conifer ? h * 0.3 : h - canopyR), density: o.density || (conifer ? 0.5 : 0.3), tint: o.tint || 0.85 + rnd() * 0.3, rot: rnd() * Math.PI * 2, noCards: !!o.noCards, cards: o.cards };
+    specs.push(spec); if (!o.noCollide) field.add(spec);
+    return spec;
+  };
+  /** Named tree kinds for hand-placed scenery (sizes from the drone footage). */
+  const KIND = {
+    oak: (h) => ({ h, conifer: false, canopyR: h * 0.55, canopyRy: h * 0.42, canopyY: h - h * 0.42 * 0.85, trunkH: h * 0.4, trunkR: 0.3 + h * 0.035, density: 0.45, tint: 0.95, cards: Math.round(70 + h * 5) }),
+    willow: (h) => ({ h, conifer: false, canopyR: h * 0.5, canopyRy: h * 0.5, canopyY: h * 0.55, trunkH: h * 0.3, trunkR: 0.25 + h * 0.03, density: 0.4, tint: 1.15, cards: Math.round(60 + h * 5) }),
+    cedar: (h) => ({ h, conifer: true, canopyR: h * 0.26, canopyRy: h * 0.45, canopyY: h * 0.55, trunkH: h * 0.2, trunkR: 0.3 + h * 0.035, density: 0.7, tint: 0.8, cards: Math.round(70 + h * 4) }),
+    pine: (h) => ({ h, conifer: true, canopyR: h * 0.24, canopyY: h * 0.62, trunkH: h * 0.45, trunkR: 0.2 + h * 0.025, density: 0.45, tint: 0.9, cards: 60 }),
+    bush: (h) => ({ h, conifer: false, canopyR: h * 0.75, canopyRy: h * 0.55, canopyY: h * 0.55, trunkH: h * 0.3, trunkR: 0.1, density: 0.5, tint: 0.85, cards: 16 }),
   };
 
+  // Hand-placed scenery (specimen trees, hedge + fence, lake reeds) when the hole has it
+  if (sc) {
+    for (const t of sc.trees || []) {
+      const p = alongHole(L, t.at, t.off);
+      const k = KIND[t.kind] || KIND.oak; const o = k(t.h || 12);
+      addTree(p.x, p.z, o.conifer, o);
+    }
+    if (sc.hedge) {
+      const hg = sc.hedge, sign = hg.side === 'L' ? 1 : -1;
+      for (let t = hg.from; t <= hg.to; t += 2.0 / (L.len || 400)) {
+        const p = alongHole(L, t, sign * (hg.off + (rnd() - 0.5) * 1.2));
+        const o = KIND.bush(2.4 + rnd() * 1.2); addTree(p.x, p.z, false, { ...o, noCollide: rnd() < 0.5 });
+      }
+      for (let t = hg.from; t <= hg.to; t += 4.5 / (L.len || 400)) {
+        const p = alongHole(L, t, sign * (hg.off - 2.2));
+        addTree(p.x, p.z, false, { h: 1.25, trunkR: 0.055, canopyR: 0.01, canopyY: 1, trunkH: 1.25, noCards: true, noCollide: true, tint: 1 });
+      }
+    }
+  }
   // Tree lines flanking the fairway
-  for (let i = 0; i < 900; i++) {
+  for (let i = 0; i < (sc && sc.style === 'parkland' ? 0 : 900); i++) {
     const a = rnd() * Math.PI * 2, r = 30 + Math.pow(rnd(), 0.7) * 55;
     // sample along the corridor: pick a random point along the spline
     const k = Math.floor(rnd() * (L.spline.length - 1)), u = rnd();
@@ -135,15 +164,24 @@ export function buildVegetation(course, tex, quality = {}) {
   // Perimeter woodland
   for (let i = 0; i < 2600; i++) {
     const x = (rnd() - 0.5) * (L.size - 20), z = (rnd() - 0.5) * (L.size - 20);
-    const { d } = splineDist(L, x, z);
+    const { d, t } = splineDist(L, x, z);
     if (d < 75) continue;
+    if (sc && sc.woodland) {
+      // parkland: keep the woods well away, except the belt behind the green
+      const gdx = x - L.green.x, gdz = z - L.green.z;
+      const endDir = L.spline.length > 1 ? Math.atan2(L.spline[L.spline.length - 1][0] - L.spline[L.spline.length - 2][0], L.spline[L.spline.length - 1][1] - L.spline[L.spline.length - 2][1]) : 0;
+      const ahead = gdx * Math.sin(endDir) + gdz * Math.cos(endDir);
+      const behind = ahead > 32 && Math.abs(gdx * Math.cos(endDir) - gdz * Math.sin(endDir)) < 140;
+      if (d < sc.woodland.beyond && !behind) continue;
+      if (behind && rnd() < 0.35) continue;
+    }
     const dens = fbm(x / 120 + 1, z / 120 + 3, 3) * 0.5 + 0.5;
     if (rnd() > dens * 1.1 + 0.15) continue;
-    if (okSpot(x, z, 60)) addTree(x, z);
+    if (okSpot(x, z, sc ? 40 : 60)) { if (sc) { const big = rnd() < 0.7; const h = big ? 14 + rnd() * 8 : 12 + rnd() * 6; const o = big ? KIND.oak(h) : KIND.cedar(h); addTree(x, z, o.conifer, { ...o, cards: Math.round(o.cards * 0.6) }); } else addTree(x, z); }
   }
   // Specimen trees around the pond and the green
-  for (let i = 0; i < (L.pond ? 12 : 0); i++) { const a = rnd() * Math.PI * 2; const x = L.pond.x + Math.cos(a) * (L.pond.rx + 8 + rnd() * 10), z = L.pond.z + Math.sin(a) * (L.pond.rz + 8 + rnd() * 10); if (okSpot(x, z, 24)) addTree(x, z, false); }
-  for (let i = 0; i < 10; i++) { const a = rnd() * Math.PI * 2; const x = L.green.x + Math.cos(a) * (32 + rnd() * 14), z = L.green.z + Math.sin(a) * (30 + rnd() * 14); if (okSpot(x, z, 25)) addTree(x, z, rnd() < 0.5); }
+  for (let i = 0; i < (L.pond && !sc ? 12 : 0); i++) { const a = rnd() * Math.PI * 2; const x = L.pond.x + Math.cos(a) * (L.pond.rx + 8 + rnd() * 10), z = L.pond.z + Math.sin(a) * (L.pond.rz + 8 + rnd() * 10); if (okSpot(x, z, 24)) addTree(x, z, false); }
+  for (let i = 0; i < (sc ? 0 : 10); i++) { const a = rnd() * Math.PI * 2; const x = L.green.x + Math.cos(a) * (32 + rnd() * 14), z = L.green.z + Math.sin(a) * (30 + rnd() * 14); if (okSpot(x, z, 25)) addTree(x, z, rnd() < 0.5); }
 
   // ---- Trunks ----
   const trunkGeo = new THREE.CylinderGeometry(0.55, 1, 1, 8, 1);
@@ -161,8 +199,9 @@ export function buildVegetation(course, tex, quality = {}) {
 
   // ---- Canopies: leaf cards ----
   const cardGeo = new THREE.PlaneGeometry(1, 1);
+  const nCards = (t, conifer) => t.cards || (conifer ? CARDS_C : CARDS_B);
   const makeCards = (texture, list, conifer) => {
-    let count = 0; for (const t of list) count += conifer ? CARDS_C : CARDS_B;
+    let count = 0; for (const t of list) count += nCards(t, conifer);
     const mat = new THREE.MeshStandardMaterial({ map: texture, alphaTest: quality.aa ? 0.3 : 0.45, alphaToCoverage: !!quality.aa, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
     addWind(mat, { amp: 0.14, freq: 0.9 });
     const mesh = new THREE.InstancedMesh(cardGeo, mat, count);
@@ -171,7 +210,7 @@ export function buildVegetation(course, tex, quality = {}) {
     const color = new THREE.Color();
     let i = 0;
     for (const t of list) {
-      const n = conifer ? CARDS_C : CARDS_B;
+      const n = nCards(t, conifer);
       for (let k = 0; k < n; k++) {
         let px, py, pz, size;
         if (conifer) {
@@ -199,7 +238,7 @@ export function buildVegetation(course, tex, quality = {}) {
     mesh.count = i;
     return mesh;
   };
-  const broad = specs.filter((t) => !t.conifer), cone = specs.filter((t) => t.conifer);
+  const broad = specs.filter((t) => !t.conifer && !t.noCards), cone = specs.filter((t) => t.conifer && !t.noCards);
   const half = Math.floor(broad.length / 2);
   group.add(makeCards(tex.leaf, broad.slice(0, half), false));
   group.add(makeCards(tex.leaf2, broad.slice(half), false));
@@ -227,12 +266,14 @@ export function buildVegetation(course, tex, quality = {}) {
     const keep = 0.25 + 0.75 * (1 - smoothstep(20, 70, d));
     if (rnd() > keep) continue;
     tuftSpots.push({ x, z, reed: false });
-    if (tuftSpots.length >= MAX_TUFTS) break;
+    if (tuftSpots.length >= MAX_TUFTS * (sc && sc.tufts != null ? sc.tufts : 1)) break;
   }
-  for (let i = 0; i < (L.pond ? MAX_REEDS : 0); i++) {
+  for (const q of ponds(L)) for (let i = 0; i < MAX_REEDS; i++) {
     const a = rnd() * Math.PI * 2, rr = 1.0 + rnd() * 0.12;
-    const x = L.pond.x + Math.cos(a) * L.pond.rx * rr, z = L.pond.z + Math.sin(a) * L.pond.rz * rr;
-    if (course.heightAt(x, z) < course.waterLevel - 0.05) continue;
+    const c = Math.cos(q.rot), sn = Math.sin(q.rot);
+    const lx = Math.cos(a) * q.rx * rr, lz = Math.sin(a) * q.rz * rr;
+    const x = q.x + lx * c - lz * sn, z = q.z + lx * sn + lz * c;
+    if (course.heightAt(x, z) < course.waterLevelAt(x, z) - 0.05) continue;
     tuftSpots.push({ x, z, reed: true });
   }
   const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, tuftSpots.length);

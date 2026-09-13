@@ -627,7 +627,7 @@ class Game {
     this.clouds.userData.update(dt);
     const w = this.wind(this.time);
     this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) + Math.PI);
-    if (this.water && this.water.material.userData.shader) { const sh = this.water.material.userData.shader; sh.uniforms.tMask.value = this.terrain.maskTex; }
+    if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
     this.ribbonMat.uniforms.uTime.value = this.time;
     const aimDir = this.aimDir();

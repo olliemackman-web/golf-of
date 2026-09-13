@@ -16,7 +16,29 @@ const PARS = [4, 3, 5, 4, 4, 3, 4, 5, 4, 4, 5, 3, 4, 4, 3, 4, 5, 4];
 // bunkers: fairway {at, side:'L'|'R'} or greenside {green:'L'|'R'|'F'|'B'|'FL'|'FR'}.
 // pond: {at, side:'L'|'R'|'C' (carry over it), rx, rz}.
 const GOSFIELD = [
-  { name: "Gosfield Hall", par: 5, yards: 514, bend: { at: 0.68, deg: -10 }, bunkers: [{ at: 0.52, side: 'R', rx: 9, rz: 5.5 }, { green: 'FL', rx: 6, rz: 4.5 }] },
+  { name: "Gosfield Hall", par: 5, yards: 514, bend: { at: 0.7, deg: -6 }, halfWidth: 19,
+    bunkers: [{ at: 0.52, side: 'R', rx: 9, rz: 4.5 }, { green: 'FL', rx: 7.5, rz: 3.6, far: 1 }, { green: 'R', rx: 5.5, rz: 3.5 }],
+    green: { rx: 16, rz: 13 },
+    // Transcribed from the drone flyover: open parkland, boundary hedge + fence down the left with
+    // fields beyond, big specimen oaks, cedars by the green on the right, lake and reeds behind-right.
+    scenery: {
+      style: 'parkland', tufts: 0.2,
+      hedge: { side: 'L', from: 0.02, to: 1.02, off: 31 },
+      trees: [
+        { at: 0.07, off: 23, kind: 'oak', h: 17 },       // big oak left, just past the tee
+        { at: 0.3, off: 40, kind: 'oak', h: 14 }, { at: 0.55, off: 36, kind: 'pine', h: 13 }, { at: 0.72, off: 35, kind: 'oak', h: 15 },
+        { at: 0.86, off: 34, kind: 'willow', h: 11 }, { at: 0.93, off: 38, kind: 'willow', h: 10 },
+        { at: 0.41, off: -27, kind: 'oak', h: 18 },      // the big oak on the right at ~210 yds
+        { at: 0.5, off: -40, kind: 'oak', h: 12 }, { at: 0.58, off: -33, kind: 'cedar', h: 15 }, { at: 0.6, off: -44, kind: 'oak', h: 13 },
+        { at: 0.64, off: -30, kind: 'pine', h: 9 }, { at: 0.8, off: -38, kind: 'oak', h: 14 },
+        { at: 0.9, off: -28, kind: 'cedar', h: 21 },     // tall cedar short-right of the green
+        { at: 0.97, off: -36, kind: 'oak', h: 12 }, { at: 1.03, off: -24, kind: 'oak', h: 11 },
+        { at: 1.06, off: -6, kind: 'oak', h: 13 }, { at: 1.08, off: 10, kind: 'oak', h: 15 }, { at: 1.1, off: -18, kind: 'cedar', h: 17 },
+        { at: 1.09, off: 24, kind: 'willow', h: 11 }, { at: 1.12, off: 2, kind: 'oak', h: 16 },
+      ],
+      lake: { at: 1.1, off: -38, rx: 26, rz: 16 },       // behind the green, right — reeds along it
+      woodland: { beyond: 120, behindGreen: 1.14 },       // dense trees only far out and past the green
+    } },
   { name: 'Boat House', par: 3, yards: 174, bunkers: [{ green: 'FL', rx: 6, rz: 4 }, { green: 'F', rx: 5, rz: 4 }], green: { rx: 15, rz: 13 } },
   { name: 'Lake Lookout', par: 4, yards: 370, bend: { at: 0.6, deg: 24 }, pond: { at: 0.86, side: 'L', rx: 18, rz: 22 }, bunkers: [{ green: 'R', rx: 6.5, rz: 4.5 }, { green: 'FR', rx: 5, rz: 4 }] },
   { name: 'Cottage Park', par: 5, yards: 539, bend: { at: 0.55, deg: 18 }, bunkers: [] },
@@ -92,7 +114,14 @@ export function makeHoleFromSpec(spec, n) {
     pond = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.rot + (q.side === 'C' ? Math.PI / 2 : 0) };
   }
   const size = Math.max(520, Math.ceil((len + 200) / 20) * 20);
-  return { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C' };
+  const L = { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C', scenery: spec.scenery || null };
+  if (spec.scenery && spec.scenery.lake) {
+    const q = spec.scenery.lake; const p = alongHole(L, q.at, q.off);
+    const lake = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.dir, seed: 7 };
+    lake.level = terrainHeightBase(L, lake.x, lake.z) - 0.6;
+    L.ponds = pond ? [pond, lake] : [lake];
+  }
+  return L;
 }
 
 /** Deterministically design hole `n` (0-based). All distances in metres. */
@@ -199,6 +228,19 @@ export function splinePoint(L, s) {
   return { x: pts[pts.length - 1][0], z: pts[pts.length - 1][1], len };
 }
 export function splineLength(L) { return polyline(L).len; }
+/** Point at fraction t along the hole plus its left-hand unit normal (off > 0 = left of the line). */
+export function alongHole(L, t, off = 0) {
+  const { pts, cum, len } = polyline(L);
+  const target = clamp(t, 0, 1.4) * len;
+  let i = pts.length - 2;
+  for (let k = 1; k < pts.length; k++) if (cum[k] >= target) { i = k - 1; break; }
+  const a = pts[i], b = pts[i + 1];
+  const segLen = cum[i + 1] - cum[i] || 1;
+  const u = (target - cum[i]) / segLen; // may exceed 1 past the green: extrapolate along the last segment
+  let dx = b[0] - a[0], dz = b[1] - a[1]; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+  const x = a[0] + (b[0] - a[0]) * u, z = a[1] + (b[1] - a[1]) * u;
+  return { x: x + dz * off, z: z - dx * off, dir: Math.atan2(dx, dz) };
+}
 
 /** Normalised elliptical distance (1 = on the edge). */
 export function ellipseDist(x, z, e) {
@@ -208,10 +250,21 @@ export function ellipseDist(x, z, e) {
   return Math.sqrt(u * u + v * v);
 }
 
+export function ponds(L) { return L.ponds || (L.pond ? [L.pond] : []); }
+function pondDistOne(q, x, z) {
+  const n = fbm(x / 23 + 3.1 + (q.seed || 0), z / 23 - 1.7, 3, 2, 0.5);
+  return ellipseDist(x, z, q) + n * 0.22;
+}
+/** Nearest pond: normalised distance and the pond itself. */
 export function pondDist(L, x, z) {
-  if (!L.pond) return 9;
-  const n = fbm(x / 23 + 3.1, z / 23 - 1.7, 3, 2, 0.5);
-  return ellipseDist(x, z, L.pond) + n * 0.22;
+  let best = 9, which = null;
+  for (const q of ponds(L)) { const d = pondDistOne(q, x, z); if (d < best) { best = d; which = q; } }
+  return best;
+}
+export function nearestPond(L, x, z) {
+  let best = 9, which = null;
+  for (const q of ponds(L)) { const d = pondDistOne(q, x, z); if (d < best) { best = d; which = q; } }
+  return { d: best, pond: which };
 }
 
 // Height of the fairway centre line by normalised t: tee slightly elevated,
@@ -221,9 +274,25 @@ function profile(L, t) {
   return 2.6 * (1 - t) - (1.0 + 0.8 * Math.sin(k * 1.7)) * Math.sin(Math.PI * t) + 1.6 * smoothstep(0.7, 1, t) + Math.sin(t * 6 + k) * 0.5;
 }
 
-export function waterLevel(L) {
-  if (L._wl == null) L._wl = profile(L, L.pond ? clamp(splineDist(L, L.pond.x, L.pond.z).t, 0, 1) : 0.35) - 1.15;
-  return L._wl;
+/** Water level of a pond: a little below the ground it sits in. */
+export function pondLevel(L, q) {
+  if (q._wl == null) q._wl = (q.level != null ? q.level : profile(L, clamp(splineDist(L, q.x, q.z).t, 0, 1)) - 1.15);
+  return q._wl;
+}
+export function waterLevel(L) { const ps = ponds(L); return ps.length ? pondLevel(L, ps[0]) : -999; }
+
+/** Terrain height ignoring ponds and bunkers — used to pick a water level for a decorative lake. */
+function terrainHeightBase(L, x, z) {
+  const ox = L.seed * 131.7, oz = L.seed * 71.3;
+  const big = fbm((x + ox) / 210 + 10, (z + oz) / 210 + 4, 4, 2, 0.5) * 6.5;
+  const med = fbm((x + ox) / 55 - 3, (z + oz) / 55 + 7, 3, 2, 0.5) * 1.3;
+  let h = big + med;
+  const { d, t } = splineDist(L, x, z);
+  const w = smoothstep(L.halfWidth + 30, L.halfWidth + 3, d);
+  h = lerp(h, profile(L, t) + med * 0.35, w);
+  const eg = ellipseDist(x, z, L.green);
+  h = lerp(h, profile(L, 1) + 0.9, smoothstep(1.7, 1.0, eg));
+  return h;
 }
 
 /** The terrain height function everything is sampled from. */
@@ -254,10 +323,10 @@ export function terrainHeight(L, x, z) {
     h += smoothstep(1.35, 1.1, e) * (1 - smoothstep(1.1, 0.95, e)) * 0.12;
   }
 
-  if (L.pond) {
-    const pe = pondDist(L, x, z);
+  for (const q of ponds(L)) {
+    const pe = pondDistOne(q, x, z);
     if (pe < 1.6) {
-      const wl = waterLevel(L);
+      const wl = pondLevel(L, q);
       const inside = smoothstep(1.12, 0.9, pe);
       h = lerp(h, wl - 2.4, inside);
       if (pe > 1.0) h = Math.max(h, wl + 0.25 * smoothstep(1.0, 1.15, pe));
@@ -279,7 +348,7 @@ export function surfaceWeights(L, x, z) {
   const tee = smoothstep(1.06, 0.98, Math.max(tdx, tdz));
   let sand = 0;
   for (const b of L.bunkers) { const e = ellipseDist(x, z, b) + fbm(x / 6, z / 6, 2) * 0.08; sand = Math.max(sand, smoothstep(1.02, 0.94, e)); }
-  const water = L.pond ? smoothstep(1.0, 0.96, pondDist(L, x, z)) : 0;
+  const water = ponds(L).length ? smoothstep(1.0, 0.96, pondDist(L, x, z)) : 0;
   return { fairway, green, sand, water, tee };
 }
 
@@ -287,7 +356,8 @@ export class Course {
   constructor(layout) {
     const L = this.layout = layout;
     this.size = L.size; this.res = L.res; this.maskRes = L.maskRes;
-    this.waterLevel = L.pond ? waterLevel(L) : -999;
+    this.waterLevel = waterLevel(L);
+    this.ponds = ponds(L).map((q) => ({ pond: q, level: pondLevel(L, q) }));
     const N = L.res, half = L.size / 2, step = L.size / (N - 1);
     this.heights = new Float32Array(N * N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) this.heights[j * N + i] = terrainHeight(L, -half + i * step, -half + j * step);
@@ -299,7 +369,7 @@ export class Course {
       const x = -half + (i + 0.5) * mstep, z = -half + (j + 0.5) * mstep;
       const { d } = splineDist(L, x, z);
       const k = (j * M + i) * 4;
-      if (d > 120 && (!L.pond || ellipseDist(x, z, L.pond) > 2.5)) continue;
+      if (d > 120 && !ponds(L).some((q) => ellipseDist(x, z, q) < 2.5)) continue;
       const s = surfaceWeights(L, x, z);
       const water = s.water, sand = s.sand * (1 - water), green = Math.max(s.green, s.tee) * (1 - water) * (1 - sand);
       const fairway = s.fairway * (1 - water) * (1 - sand) * (1 - green);
@@ -339,5 +409,7 @@ export class Course {
     return { id, w };
   }
 
+  /** Water level of the pond nearest this point (the ball checks it on contact). */
+  waterLevelAt(x, z) { let best = 9, lvl = this.waterLevel; for (const p of this.ponds) { const d = ellipseDist(x, z, p.pond); if (d < best) { best = d; lvl = p.level; } } return lvl; }
   inBounds(x, z) { const h = this.size / 2 - 12; return x > -h && x < h && z > -h && z < h; }
 }

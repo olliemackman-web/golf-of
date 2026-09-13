@@ -1,6 +1,6 @@
 # Riverbend Golf — first-person golf in the browser
 
-Two 18-hole courses (par 72 each) played from the golfer's eyes: Riverbend, generated from a seed, and Gosfield Lake, hand-transcribed hole by hole from the club's course guide (`GOSFIELD` in `src/courseData.js` — yards, par, doglegs, bunkers, ponds and carries). Pick the course after picking a player; best rounds are kept per course. Everything on screen is generated
+Two 18-hole courses (par 72 each) played from the golfer's eyes: Riverbend, generated from a seed, and Gosfield Lake, hand-transcribed hole by hole from the club's course guide (`GOSFIELD` in `src/courseData.js` — yards, par, doglegs, bunkers, ponds and carries). Pick the course after picking a player; best rounds are kept per course. A hole spec can also carry hand-placed `scenery` (specimen trees, hedge and fence, a decorative lake, where the woods start) — hole 1 at Gosfield is laid out from drone footage of the real hole. Everything on screen is generated
 in code at load time: the terrain and its surface mask, the grass/sand/bark/leaf
 textures, the trees and rough, the golfer rig and clubs, the swing animation,
 and every sound.

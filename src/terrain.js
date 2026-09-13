@@ -110,34 +110,37 @@ normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(8.0, 60.0, camDist
 }
 
 export function buildWater(course, tex, envMap) {
-  const p = course.layout.pond;
-  if (!p) return null;
-  const r = Math.max(p.rx, p.rz) * 1.45;
-  const geo = new THREE.CircleGeometry(r, 64);
-  geo.rotateX(-Math.PI / 2);
-  tex.waterNormal.repeat.set(r / 4, r / 4);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x1f4a52, roughness: 0.22, metalness: 0.0, transparent: true, opacity: 0.92,
-    normalMap: tex.waterNormal, normalScale: new THREE.Vector2(0.35, 0.35), envMap, envMapIntensity: 1.1,
-  });
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.tMask = { value: null }; shader.uniforms.uSize = { value: course.size };
-    mat.userData.shader = shader;
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos; uniform sampler2D tMask; uniform float uSize;')
-      .replace('#include <color_fragment>', `#include <color_fragment>
+  if (!course.ponds || !course.ponds.length) return null;
+  const group = new THREE.Group();
+  for (const { pond: p, level } of course.ponds) {
+    const r = Math.max(p.rx, p.rz) * 1.45;
+    const geo = new THREE.CircleGeometry(r, 64);
+    geo.rotateX(-Math.PI / 2);
+    tex.waterNormal.repeat.set(r / 4, r / 4);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x1f4a52, roughness: 0.22, metalness: 0.0, transparent: true, opacity: 0.92,
+      normalMap: tex.waterNormal, normalScale: new THREE.Vector2(0.35, 0.35), envMap, envMapIntensity: 1.1,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.tMask = { value: null }; shader.uniforms.uSize = { value: course.size };
+      mat.userData.shader = shader;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos; uniform sampler2D tMask; uniform float uSize;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
 float wmask = texture2D(tMask, vWorldPos.xz / uSize + 0.5).a;
 diffuseColor.a *= smoothstep(0.02, 0.5, wmask);
 diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.32, 0.36, 0.28), (1.0 - smoothstep(0.3, 1.0, wmask)) * 0.6);`);
-  };
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(p.x, course.waterLevel, p.z);
-  mesh.receiveShadow = true;
-  mesh.renderOrder = 2;
-  return mesh;
+    };
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(p.x, level, p.z);
+    mesh.receiveShadow = true;
+    mesh.renderOrder = 2;
+    group.add(mesh);
+  }
+  return group;
 }
 
 /** Big, cheap hills ringing the course so the horizon isn't empty. */

@@ -119,8 +119,9 @@ export class Ball {
     const p = this.pos, v = this.vel, s = this.spin;
     p.y = ground + BALL_R;
     const surf = this.course.surfaceAt(p.x, p.z);
-    if (surf.id === SURF.WATER && this.course.waterLevel !== undefined) {
-      if (ground < this.course.waterLevel + 0.05) { this.mode = 'water'; this.events.push({ type: 'water' }); return; }
+    if (surf.id === SURF.WATER) {
+      const wl = this.course.waterLevelAt ? this.course.waterLevelAt(p.x, p.z) : this.course.waterLevel;
+      if (ground < wl + 0.05) { this.mode = 'water'; this.events.push({ type: 'water' }); return; }
     }
     const S = surfaceProps(surf.id);
     const n = this.course.normalAt(p.x, p.z, this.n);
