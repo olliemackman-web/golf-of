@@ -13,7 +13,7 @@ import { GameAudio } from './audio.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const T_METER = 1.15, T_DOWN = 0.62, T_DOWN_PUTT = 0.5, ACC_WINDOW = 0.13;
+const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.62, T_DOWN_PUTT = 0.5, ACC_WINDOW = 0.13;
 
 class Game {
   constructor() {
@@ -107,7 +107,7 @@ class Game {
       cam: () => this.toggleCam(),
       prev: () => this.changeClub(-1),
       next: () => this.changeClub(1),
-      target: (p) => { this.planPower = clamp(p, 0.3, 1); this.previewDirty = true; },
+      target: (p) => { this.planPower = clamp(p, 0.08, 1); this.previewDirty = true; },
     });
     this.hud.setHole(this.course);
     this.setupInput();
@@ -124,7 +124,7 @@ class Game {
   async buildHoleScene(n, progress = () => {}) {
     const scene = this.scene;
     if (this.holeGroup) {
-      this.holeGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material !== this.tex) { const m = o.material; if (m.dispose) m.dispose(); } });
+      this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
       if (this.terrain) this.terrain.maskTex.dispose();
     }
@@ -290,7 +290,7 @@ class Game {
       return Math.hypot(r.end.x - from.x, r.end.z - from.z);
     };
     if (endDist(1) <= want) { this.planPower = 1; return; }
-    let lo = 0.3, hi = 1;
+    let lo = this.club.putter ? 0.08 : 0.3, hi = 1;
     if (endDist(lo) >= want) { this.planPower = lo; return; }
     for (let i = 0; i < 7; i++) { const mid = (lo + hi) / 2; if (endDist(mid) < want) lo = mid; else hi = mid; }
     this.planPower = Math.round(((lo + hi) / 2) * 100) / 100;
@@ -375,8 +375,8 @@ class Game {
         case 'KeyE': case 'ArrowDown': this.changeClub(1); break;
         case 'KeyC': this.toggleCam(); break;
         case 'KeyV': this.cycleView(); break;
-        case 'KeyW': if (this.state === 'aim') { this.planPower = clamp(this.planPower + 0.05, 0.3, 1); this.previewDirty = true; } break;
-        case 'KeyS': if (this.state === 'aim') { this.planPower = clamp(this.planPower - 0.05, 0.3, 1); this.previewDirty = true; } break;
+        case 'KeyW': if (this.state === 'aim') { this.planPower = clamp(this.planPower + 0.05, 0.08, 1); this.previewDirty = true; } break;
+        case 'KeyS': if (this.state === 'aim') { this.planPower = clamp(this.planPower - 0.05, 0.08, 1); this.previewDirty = true; } break;
         case 'KeyR': this.restart(); break;
         case 'Escape': if (this.state === 'toAddress' || this.state === 'address') this.enterAim(); break;
         case 'KeyM': if (this.audio.master) { this.audio.master.gain.value = this.audio.master.gain.value > 0 ? 0 : 0.8; } break;
@@ -414,13 +414,14 @@ class Game {
       this.hud.meter({ label: 'POWER', fill: 0, marker: null, set: this.planPower < 1 ? this.planPower : null });
       this.hud.setHint('<b>SPACE</b> set power'); this.hud.setSwingLabel('POWER');
     } else if (s.phase === 'back') {
-      s.power = clamp(s.t / T_METER, 0.05, 1);
+      s.power = clamp(s.t / this.meterTime(), 0.03, 1);
       this.startDown();
     } else if (s.phase === 'down') {
       if (s.acc == null) { s.acc = s.t - s.tDown; s.accT = s.t; }
     }
   }
 
+  meterTime() { return this.club.putter ? T_METER_PUTT : T_METER; }
   startDown() {
     const s = this.swing;
     s.phase = 'down'; s.t = 0; s.tDown = this.club.putter ? T_DOWN_PUTT : T_DOWN;
@@ -564,10 +565,10 @@ class Game {
   updateSwing(dt) {
     const s = this.swing; s.t += dt;
     if (s.phase === 'back') {
-      const fill = Math.min(1, s.t / T_METER);
+      const fill = Math.min(1, s.t / this.meterTime());
       this.golfer.setBackswing(fill);
       this.hud.meter({ label: 'POWER', fill, marker: null, set: this.planPower < 1 ? this.planPower : null, pct: fill });
-      if (s.t >= T_METER + 0.25) { s.power = 1; this.startDown(); }
+      if (s.t >= this.meterTime() + 0.25) { s.power = 1; this.startDown(); }
     } else if (s.phase === 'down') {
       if (!s.downStarted && s.t >= s.holdDelay) { s.downStarted = true; this.golfer.beginDownswing(s.tDown, () => this.impact()); }
       const sweep = clamp((s.t - s.holdDelay) / s.tDown, 0, 1);
@@ -751,8 +752,15 @@ class Game {
     const L = makeHole(n);
     this.panel.innerHTML = `<div class="sub">WALKING TO THE NEXT TEE</div><h1>HOLE ${L.number}</h1><div class="sub">PAR ${L.par} · ${L.yards} YDS</div><p>${this.holeBlurb(L)}</p><div id="loading">…</div>`;
     this.overlay.classList.remove('hidden');
-    await this.buildHoleScene(n, (t) => { const el = document.getElementById('loading'); if (el) el.textContent = t; });
-    this.newHole();
+    try {
+      await this.buildHoleScene(n, (t) => { const el = document.getElementById('loading'); if (el) el.textContent = t; });
+      this.newHole();
+    } catch (e) {
+      console.error(e);
+      this.panel.innerHTML += `<p style="color:#ff8a7a">Could not build the hole: ${e.message}</p><button class="btn" id="retryBtn">RETRY</button>`;
+      document.getElementById('retryBtn').onclick = () => { this.loadingHole = false; this.goToHole(n); };
+      return;
+    }
     this.overlay.classList.add('hidden');
     this.loadingHole = false;
     this.beginFlyover();

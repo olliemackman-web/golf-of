@@ -197,7 +197,7 @@ export class Ball {
     const dx = p.x - H.x, dz = p.z - H.z, d = Math.hypot(dx, dz);
     if (d < HOLE_R) {
       // Capture if slow enough that the ball drops before it crosses the cup.
-      const vmax = 1.35 + (HOLE_R - d) * 12;
+      const vmax = 1.7 + (HOLE_R - d) * 14;
       if (sp < vmax) { this.mode = 'holed'; this.events.push({ type: 'holed' }); p.x = H.x; p.z = H.z; v.x = v.y = v.z = 0; return; }
       // Lip-out: deflect and lose speed.
       if (d > HOLE_R * 0.55) {
@@ -218,7 +218,8 @@ export class Ball {
  */
 export function shotParams(club, power, accuracy, lie) {
   const S = surfaceProps(lie);
-  if (club.putter) return { speed: club.speed * power, loft: 0, back: 0, side: 0, dirErr: accuracy * 2.5 };
+  // putter: steep curve so the bottom of the meter gives genuinely soft strokes for tap-ins
+  if (club.putter) return { speed: club.speed * Math.pow(power, 1.7), loft: 0, back: 0, side: 0, dirErr: accuracy * 2.5 };
   let speedMul = S.speed, spinMul = S.spin;
   if (lie === SURF.SAND && club.sand) { speedMul = 0.9; spinMul = 0.7; }
   if (lie === SURF.SAND && club.wood) { speedMul = 0.45; spinMul = 0.3; }

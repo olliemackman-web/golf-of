@@ -18,7 +18,7 @@ export class Hud {
       <div class="hint" id="hint"></div>
       <div class="camtag" id="camtag"></div>
       <div class="abar" id="abar"><div class="alabel">ACCURACY <b id="apct">0%</b></div><div class="atrack"><div class="azone"></div><div class="afill" id="afill"></div><div class="amark" id="amark"></div></div></div>
-      <div class="target" id="target"><div class="tlabel">TARGET <b id="tval">100%</b> <span id="tcarry"></span></div><input type="range" id="tpow" min="30" max="100" value="100"></div>
+      <div class="target" id="target"><div class="tlabel">TARGET <b id="tval">100%</b> <span id="tcarry"></span></div><input type="range" id="tpow" min="8" max="100" value="100"></div>
       <div class="controls" id="controls">
         <button class="cbtn" id="btnView" title="Aim view (V)">VIEW</button>
         <button class="cbtn" id="btnCam" title="Ball camera (C)">CAM</button>
