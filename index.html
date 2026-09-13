@@ -53,7 +53,18 @@
   .btn{display:inline-block;padding:12px 30px;border-radius:999px;background:#c9ff5b;color:#0b1118;font-weight:800;letter-spacing:.14em;font-size:13px;cursor:pointer;border:0}
   .btn:hover{background:#dfff8f}
   .score{font-size:64px;font-weight:900;color:#c9ff5b;margin:6px 0}
+  .scorecard{display:grid;grid-template-columns:repeat(9,1fr);gap:4px;margin:14px auto 18px;max-width:420px}
+  .scorecard span{display:block;background:rgba(255,255,255,.08);border-radius:6px;padding:4px 0 5px;font-size:15px;font-weight:700}
+  .scorecard span small{display:block;font-size:9px;opacity:.55;font-weight:500;letter-spacing:.1em;margin-bottom:1px}
+  .scorecard span.under{color:#c9ff5b}.scorecard span.over{color:#ff8a7a}.scorecard span.todo{opacity:.35}
   #loading{font-size:12px;letter-spacing:.3em;opacity:.8;margin-top:14px}
+  .abar{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);width:340px;opacity:0;transition:opacity .2s;text-align:center}
+  .alabel{font-size:10px;letter-spacing:.22em;opacity:.85;margin-bottom:6px}.alabel b{color:#fff}
+  .atrack{position:relative;height:18px;border-radius:9px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.25);overflow:hidden}
+  .azone{position:absolute;top:0;bottom:0;right:0;width:8%;background:rgba(201,255,91,.45)}
+  .afill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(to right,#ff5a3c,#ffd23c 55%,#c9ff5b)}
+  .amark{position:absolute;top:-2px;bottom:-2px;width:3px;margin-left:-1px;background:#fff;box-shadow:0 0 6px #fff}
+  .abar.good .alabel b{color:#c9ff5b}.abar.bad .alabel b{color:#ff8a7a}
   .controls{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;pointer-events:auto}
   .cbtn{pointer-events:auto;cursor:pointer;border:1px solid rgba(255,255,255,.22);background:rgba(8,14,20,.6);backdrop-filter:blur(8px);color:#fff;font:700 11px/1 "Helvetica Neue",Inter,Arial,sans-serif;letter-spacing:.14em;padding:12px 14px;border-radius:999px;touch-action:manipulation}
   .cbtn:active{background:rgba(201,255,91,.35)}
@@ -74,6 +85,7 @@
     .hint{display:none}
     .msg{font-size:16px;bottom:24%;white-space:normal;text-align:center;max-width:80vw}
     .camtag{top:auto;bottom:92px;font-size:9px}
+    .abar{bottom:80px;width:min(300px,62vw)}.atrack{height:14px}
     .controls{bottom:12px;gap:6px}.cbtn{padding:11px 11px;font-size:10px}.cbtn.big{padding:15px 24px;font-size:13px}
     .target{right:10px;bottom:86px;width:130px;padding:6px 10px 4px}
     .panel{padding:22px 20px;max-width:88vw}.panel h1{font-size:28px}.panel .keys{grid-template-columns:auto 1fr;font-size:11px;gap:4px 10px}.panel p{font-size:12px}
@@ -93,7 +105,7 @@
 <div id="overlay">
   <div class="panel" id="panel">
     <h1>RIVERBEND</h1>
-    <div class="sub">HOLE 1 · PAR 4 · FIRST PERSON</div>
+    <div class="sub">18 HOLES · PAR 72 · FIRST PERSON</div>
     <div id="loading">PREPARING THE COURSE…</div>
   </div>
 </div>

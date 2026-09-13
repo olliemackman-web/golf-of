@@ -84,15 +84,16 @@ export class Golfer {
     // torso
     this.torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.42, 6, 14), shirt);
     this.torso.position.set(0.04, 1.06, 0); this.torso.rotation.z = -0.28; this.torso.castShadow = true; this.group.add(this.torso);
+    this.bodyParts = [this.torso];
     // legs + shoes
     this.legs = [];
     for (const side of [-1, 1]) {
-      const leg = cylBetween(0.075, 0.06, trouser); this.group.add(leg);
+      const leg = cylBetween(0.075, 0.06, trouser); this.group.add(leg); this.bodyParts.push(leg);
       placeCyl(leg, new THREE.Vector3(-0.02, 0.92, side * 0.17), new THREE.Vector3(0.02, 0.06, side * 0.24));
       const shoe = new THREE.Group();
       const upper = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.1), new THREE.MeshStandardMaterial({ color: COL.shoe, roughness: 0.55 })); upper.position.y = 0.055; shoe.add(upper);
       const sole = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.025, 0.105), new THREE.MeshStandardMaterial({ color: COL.sole, roughness: 0.8 })); sole.position.y = 0.012; shoe.add(sole);
-      shoe.position.set(0.09, 0, side * 0.25); shoe.rotation.y = side * -0.15; shoe.castShadow = true; this.group.add(shoe);
+      shoe.position.set(0.09, 0, side * 0.25); shoe.rotation.y = side * -0.15; shoe.castShadow = true; this.group.add(shoe); this.bodyParts.push(shoe);
     }
     // arms
     this.upperL = cylBetween(0.052, 0.045, shirt); this.upperR = cylBetween(0.052, 0.045, shirt);
@@ -162,6 +163,7 @@ export class Golfer {
     this.group.updateMatrixWorld(true);
   }
 
+  setBodyVisible(v) { for (const m of this.bodyParts) m.visible = v; }
   eyeWorld(out) { const e = this.stance.eye; return out.set(e[0], e[1], e[2]).applyMatrix4(this.group.matrixWorld); }
   ballWorld(out) { return out.copy(this.ballLocal).applyMatrix4(this.group.matrixWorld); }
   clubHeadWorld(out) { return this.clubMesh.userData.head.getWorldPosition(out); }

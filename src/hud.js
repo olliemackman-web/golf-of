@@ -1,15 +1,15 @@
 // DOM overlay: hole card, wind, minimap, club, swing meter, messages.
-import { LAYOUT } from './courseData.js';
+import { COURSE_NAME } from './courseData.js';
 
 const YD = 1.09361;
 export const yards = (m) => Math.round(m * YD);
 
 export class Hud {
   constructor(course) {
-    this.course = course;
+    this.course = course; this.layout = course.layout;
     this.root = document.getElementById('hud');
     this.root.innerHTML = `
-      <div class="card hole"><div class="hname">RIVERBEND · HOLE 1</div><div class="hrow"><span>PAR ${LAYOUT.par}</span><span id="hyds">— YDS</span></div><div class="hrow strokes"><span>STROKE <b id="stroke">1</b></span><span>TO PIN <b id="topin">—</b></span></div><div class="lie" id="lie"></div></div>
+      <div class="card hole"><div class="hname" id="hname">${COURSE_NAME.toUpperCase()} · HOLE 1</div><div class="hrow"><span id="hpar">PAR 4</span><span id="hyds">— YDS</span></div><div class="hrow strokes"><span>STROKE <b id="stroke">1</b></span><span>TO PIN <b id="topin">—</b></span></div><div class="lie" id="lie"></div></div>
       <div class="card wind"><div class="wlabel">WIND</div><div class="wdial"><div class="warrow" id="warrow">➤</div></div><div class="wspeed" id="wspeed">0 mph</div></div>
       <canvas id="minimap" width="170" height="230"></canvas>
       <div class="meter" id="meter"><div class="mlabel" id="mlabel">POWER</div><div class="mbar"><div class="mzone"></div><div class="mfill" id="mfill"></div><div class="mmark" id="mmark"></div><div class="mset" id="mset"></div></div><div class="mpct" id="mpct"></div></div>
@@ -17,6 +17,7 @@ export class Hud {
       <div class="msg" id="msg"></div>
       <div class="hint" id="hint"></div>
       <div class="camtag" id="camtag"></div>
+      <div class="abar" id="abar"><div class="alabel">ACCURACY <b id="apct">0%</b></div><div class="atrack"><div class="azone"></div><div class="afill" id="afill"></div><div class="amark" id="amark"></div></div></div>
       <div class="target" id="target"><div class="tlabel">TARGET <b id="tval">100%</b> <span id="tcarry"></span></div><input type="range" id="tpow" min="30" max="100" value="100"></div>
       <div class="controls" id="controls">
         <button class="cbtn" id="btnView" title="Aim view (V)">VIEW</button>
@@ -26,15 +27,35 @@ export class Hud {
         <button class="cbtn big" id="btnSwing">SWING</button>
       </div>`;
     this.el = {};
-    for (const id of ['hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
+    for (const id of ['abar', 'apct', 'afill', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
 
+  /** Switch to a new hole: re-fit the minimap and update the card. */
+  setHole(course) {
+    this.course = course; this.layout = course.layout;
+    const L = this.layout;
+    this.el.hname.textContent = `${COURSE_NAME.toUpperCase()} · HOLE ${L.number}`;
+    this.el.hpar.textContent = `PAR ${L.par}`;
+    this.el.hyds.textContent = `${L.yards} YDS`;
+    this.buildMinimap();
+  }
+
   buildMinimap() {
-    const c = this.course, M = c.maskRes, half = c.size / 2;
-    // region of the course the minimap shows
-    this.mm = { x0: -120, x1: 200, z0: -235, z1: 195 };
+    const c = this.course, M = c.maskRes, half = c.size / 2, L = this.layout;
+    // region of the course the minimap shows: fit everything on the hole with a margin
+    const xs = [], zs = [];
+    const add = (x, z, m = 0) => { xs.push(x - m, x + m); zs.push(z - m, z + m); };
+    for (const p of L.spline) add(p[0], p[1], L.halfWidth + 20);
+    add(L.tee.x, L.tee.z, 20); add(L.green.x, L.green.z, 40);
+    for (const b of L.bunkers) add(b.x, b.z, 12);
+    if (L.pond) add(L.pond.x, L.pond.z, Math.max(L.pond.rx, L.pond.rz) + 10);
+    let x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+    // keep the 170:230 aspect
+    const aspect = 170 / 230; let w = x1 - x0, h = z1 - z0;
+    if (w / h < aspect) { const nw = h * aspect; x0 -= (nw - w) / 2; x1 += (nw - w) / 2; } else { const nh = w / aspect; z0 -= (nh - h) / 2; z1 += (nh - h) / 2; }
+    this.mm = { x0, x1, z0, z1 };
     const off = document.createElement('canvas'); off.width = 170; off.height = 230;
     const ctx = off.getContext('2d'), img = ctx.createImageData(170, 230), d = img.data;
     for (let py = 0; py < 230; py++) for (let px = 0; px < 170; px++) {
@@ -57,7 +78,7 @@ export class Hud {
       ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 3]);
       ctx.beginPath(); preview.forEach((p, i) => { const [px, py] = this.mmPoint(p.x, p.z); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }); ctx.stroke(); ctx.setLineDash([]);
     }
-    const [fx, fy] = this.mmPoint(LAYOUT.pin.x, LAYOUT.pin.z);
+    const [fx, fy] = this.mmPoint(this.layout.pin.x, this.layout.pin.z);
     ctx.fillStyle = '#ff3b3b'; ctx.fillRect(fx - 1, fy - 9, 2, 9); ctx.beginPath(); ctx.moveTo(fx + 1, fy - 9); ctx.lineTo(fx + 8, fy - 6.5); ctx.lineTo(fx + 1, fy - 4); ctx.fill();
     if (ball) { const [bx, by] = this.mmPoint(ball.x, ball.z); ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
   }
@@ -85,6 +106,15 @@ export class Hud {
     clearTimeout(this.msgTimer); if (ms > 0) this.msgTimer = setTimeout(() => { m.className = 'msg'; }, ms);
   }
   showMeter(show) { this.el.meter.style.opacity = show ? 1 : 0; }
+  showAccuracy(show) { this.el.abar.style.opacity = show ? 1 : 0; }
+  /** sweep 0..1 runs left→right; hit = where it was stopped (null while still running); good = within the zone. */
+  accuracy({ sweep, hit, good }) {
+    const v = hit == null ? sweep : hit;
+    this.el.afill.style.width = `${(v * 100).toFixed(1)}%`;
+    this.el.amark.style.left = `${(v * 100).toFixed(1)}%`;
+    this.el.apct.textContent = `${Math.round(v * 100)}%`;
+    this.el.abar.className = 'abar' + (hit == null ? '' : good ? ' good' : ' bad');
+  }
   /** power 0..1 fill, marker 0..1 position (null hides), set = chosen power line. */
   meter({ label, fill, marker, set, pct }) {
     this.el.mlabel.textContent = label;

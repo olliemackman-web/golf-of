@@ -2,7 +2,7 @@
 // the tree collision field the ball physics calls into.
 import * as THREE from 'three';
 import { mulberry32, fbm, smoothstep } from './noise.js';
-import { LAYOUT, splineDist, ellipseDist, SURF } from './courseData.js';
+import { splineDist, ellipseDist, SURF } from './courseData.js';
 import { BALL_R } from './physics.js';
 
 const windUniform = { value: 0 };
@@ -95,15 +95,15 @@ export function buildVegetation(course, tex, quality = {}) {
   const rnd = mulberry32(2024);
   const group = new THREE.Group();
   const field = new TreeField();
-  const L = LAYOUT;
+  const L = course.layout;
 
   const okSpot = (x, z, minSpline) => {
     if (!course.inBounds(x, z)) return false;
-    const { d, t } = splineDist(x, z);
+    const { d, t } = splineDist(L, x, z);
     if (d < minSpline) return false;
     const s = course.surfaceAt(x, z);
     if (s.id !== SURF.ROUGH) return false;
-    if (ellipseDist(x, z, L.pond) < 1.25) return false;
+    if (L.pond && ellipseDist(x, z, L.pond) < 1.25) return false;
     if (ellipseDist(x, z, L.green) < 2.2) return false;
     if (Math.hypot(x - L.tee.x, z - L.tee.z) < 14) return false;
     for (const b of L.bunkers) if (ellipseDist(x, z, b) < 1.8) return false;
@@ -123,7 +123,6 @@ export function buildVegetation(course, tex, quality = {}) {
   };
 
   // Tree lines flanking the fairway
-  const { pts } = (function () { let l = 0; const arr = []; const sp = L.spline; return { pts: sp }; })();
   for (let i = 0; i < 900; i++) {
     const a = rnd() * Math.PI * 2, r = 30 + Math.pow(rnd(), 0.7) * 55;
     // sample along the corridor: pick a random point along the spline
@@ -135,14 +134,14 @@ export function buildVegetation(course, tex, quality = {}) {
   // Perimeter woodland
   for (let i = 0; i < 2600; i++) {
     const x = (rnd() - 0.5) * (L.size - 20), z = (rnd() - 0.5) * (L.size - 20);
-    const { d } = splineDist(x, z);
+    const { d } = splineDist(L, x, z);
     if (d < 75) continue;
     const dens = fbm(x / 120 + 1, z / 120 + 3, 3) * 0.5 + 0.5;
     if (rnd() > dens * 1.1 + 0.15) continue;
     if (okSpot(x, z, 60)) addTree(x, z);
   }
   // Specimen trees around the pond and the green
-  for (let i = 0; i < 12; i++) { const a = rnd() * Math.PI * 2; const x = L.pond.x + Math.cos(a) * (L.pond.rx + 8 + rnd() * 10), z = L.pond.z + Math.sin(a) * (L.pond.rz + 8 + rnd() * 10); if (okSpot(x, z, 24)) addTree(x, z, false); }
+  for (let i = 0; i < (L.pond ? 12 : 0); i++) { const a = rnd() * Math.PI * 2; const x = L.pond.x + Math.cos(a) * (L.pond.rx + 8 + rnd() * 10), z = L.pond.z + Math.sin(a) * (L.pond.rz + 8 + rnd() * 10); if (okSpot(x, z, 24)) addTree(x, z, false); }
   for (let i = 0; i < 10; i++) { const a = rnd() * Math.PI * 2; const x = L.green.x + Math.cos(a) * (32 + rnd() * 14), z = L.green.z + Math.sin(a) * (30 + rnd() * 14); if (okSpot(x, z, 25)) addTree(x, z, rnd() < 0.5); }
 
   // ---- Trunks ----
@@ -218,18 +217,18 @@ export function buildVegetation(course, tex, quality = {}) {
   const tuftSpots = [];
   for (let i = 0; i < 260000; i++) {
     const x = (rnd() - 0.5) * (L.size - 40), z = (rnd() - 0.5) * (L.size - 40);
-    const { d } = splineDist(x, z);
+    const { d } = splineDist(L, x, z);
     if (d > 95) continue;
     const sf = course.surfaceAt(x, z);
     if (sf.id !== SURF.ROUGH) continue;
-    if (ellipseDist(x, z, L.pond) < 1.15) continue;
+    if (L.pond && ellipseDist(x, z, L.pond) < 1.15) continue;
     // denser near the fairway edge, thinning further out
     const keep = 0.25 + 0.75 * (1 - smoothstep(20, 70, d));
     if (rnd() > keep) continue;
     tuftSpots.push({ x, z, reed: false });
     if (tuftSpots.length >= MAX_TUFTS) break;
   }
-  for (let i = 0; i < MAX_REEDS; i++) {
+  for (let i = 0; i < (L.pond ? MAX_REEDS : 0); i++) {
     const a = rnd() * Math.PI * 2, rr = 1.0 + rnd() * 0.12;
     const x = L.pond.x + Math.cos(a) * L.pond.rx * rr, z = L.pond.z + Math.sin(a) * L.pond.rz * rr;
     if (course.heightAt(x, z) < course.waterLevel - 0.05) continue;

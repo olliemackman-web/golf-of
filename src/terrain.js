@@ -1,7 +1,7 @@
 // Terrain mesh + splat shader, water, far hills, sky, clouds, hole & flag.
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { LAYOUT, splineDist } from './courseData.js';
+import { splineDist } from './courseData.js';
 import { HOLE_R } from './physics.js';
 import { fbm } from './noise.js';
 import * as T from './textures.js';
@@ -53,7 +53,7 @@ export function buildTerrain(course, tex) {
   tex.grassNormal.repeat.set(normalTiles, normalTiles);
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0, normalMap: tex.grassNormal, normalScale: new THREE.Vector2(0.55, 0.55) });
   // Stripes run along the first fairway segment.
-  const s0 = LAYOUT.spline[1], s1 = LAYOUT.spline[3];
+  const s0 = course.layout.spline[1], s1 = course.layout.spline[3];
   const sd = new THREE.Vector2(s1[0] - s0[0], s1[1] - s0[1]).normalize();
   const stripeDir = new THREE.Vector2(-sd.y, sd.x);
   const uniforms = {
@@ -110,7 +110,8 @@ normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(20.0, 110.0, camDi
 }
 
 export function buildWater(course, tex, envMap) {
-  const p = LAYOUT.pond;
+  const p = course.layout.pond;
+  if (!p) return null;
   const r = Math.max(p.rx, p.rz) * 1.45;
   const geo = new THREE.CircleGeometry(r, 64);
   geo.rotateX(-Math.PI / 2);
@@ -147,12 +148,14 @@ export function buildFarHills(course) {
   const p = geo.attributes.position, col = new Float32Array(p.count * 3);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), r = Math.hypot(x, z);
-    const rise = Math.min(1, Math.max(0, (r - 330) / 500));
-    let h = (fbm(x / 600 + 9, z / 600 + 2, 4) * 0.5 + 0.5) * 140 * rise + fbm(x / 150, z / 150, 3) * 18 * rise;
-    if (r < 340) {
+    const half = course.size / 2;
+    const rise = Math.min(1, Math.max(0, (r - (half + 10)) / 500));
+    let h = (fbm(x / 600 + 9 + course.layout.seed, z / 600 + 2, 4) * 0.5 + 0.5) * 140 * rise + fbm(x / 150, z / 150, 3) * 18 * rise;
+    if (r < half + 20) {
       // sit well under the real terrain (bunkers/pond are dug out), rising to meet it at the edge
-      const edge = course.heightAt(Math.max(-315, Math.min(315, x)), Math.max(-315, Math.min(315, z)));
-      const k = Math.min(1, Math.max(0, (r - 300) / 40));
+      const c = half - 5;
+      const edge = course.heightAt(Math.max(-c, Math.min(c, x)), Math.max(-c, Math.min(c, z)));
+      const k = Math.min(1, Math.max(0, (r - (half - 20)) / 40));
       h = edge - 5 * (1 - k) - 0.3;
     }
     p.setY(i, h);
@@ -208,7 +211,7 @@ export function buildClouds(tex) {
 /** Cup (cut into the terrain with the depth trick), flagstick and a waving flag. */
 export function buildHole(course, tex) {
   const g = new THREE.Group();
-  const { x, z } = LAYOUT.pin;
+  const { x, z } = course.layout.pin;
   const y = course.heightAt(x, z);
   g.position.set(x, y, z);
   const depth = 0.11;
@@ -232,7 +235,7 @@ export function buildHole(course, tex) {
   const flagW = 0.56, flagH = 0.38;
   const fgeo = new THREE.PlaneGeometry(flagW, flagH, 16, 6);
   fgeo.translate(flagW / 2, 0, 0);
-  const fmat = new THREE.MeshStandardMaterial({ map: tex.flag, side: THREE.DoubleSide, roughness: 0.8 });
+  const fmat = new THREE.MeshStandardMaterial({ map: T.makeTex(T.flagTexture(course.layout.number), { repeat: false }), side: THREE.DoubleSide, roughness: 0.8 });
   const fu = { uTime: { value: 0 } };
   fmat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = fu.uTime;
@@ -253,7 +256,7 @@ transformed.y += sin(fx * 6.0 - uTime * 5.0) * 0.012 * fx;`);
 
 export function buildTeeMarkers(course) {
   const g = new THREE.Group();
-  const t = LAYOUT.tee;
+  const t = course.layout.tee;
   const mat = new THREE.MeshStandardMaterial({ color: 0x1e4fd8, roughness: 0.5 });
   for (const dx of [-2.2, 2.2]) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), mat);
