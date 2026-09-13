@@ -130,6 +130,7 @@ export function buildVegetation(course, tex, quality = {}) {
     willow: (h) => ({ h, conifer: false, canopyR: h * 0.5, canopyRy: h * 0.5, canopyY: h * 0.55, trunkH: h * 0.3, trunkR: 0.25 + h * 0.03, density: 0.4, tint: 1.15, cards: Math.round(60 + h * 5) }),
     cedar: (h) => ({ h, conifer: true, canopyR: h * 0.26, canopyRy: h * 0.45, canopyY: h * 0.55, trunkH: h * 0.2, trunkR: 0.3 + h * 0.035, density: 0.7, tint: 0.8, cards: Math.round(70 + h * 4) }),
     pine: (h) => ({ h, conifer: true, canopyR: h * 0.24, canopyY: h * 0.62, trunkH: h * 0.45, trunkR: 0.2 + h * 0.025, density: 0.45, tint: 0.9, cards: 60 }),
+    poplar: (h) => ({ h, conifer: false, canopyR: h * 0.2, canopyRy: h * 0.42, canopyY: h * 0.56, trunkH: h * 0.3, trunkR: 0.2 + h * 0.02, density: 0.5, tint: 1.05, cards: Math.round(40 + h * 3) }),
     bush: (h) => ({ h, conifer: false, canopyR: h * 0.75, canopyRy: h * 0.55, canopyY: h * 0.55, trunkH: h * 0.3, trunkR: 0.1, density: 0.5, tint: 0.85, cards: 16 }),
   };
 
@@ -142,11 +143,13 @@ export function buildVegetation(course, tex, quality = {}) {
     }
     if (sc.hedge) {
       const hg = sc.hedge, sign = hg.side === 'L' ? 1 : -1;
-      for (let t = hg.from; t <= hg.to; t += 2.0 / (L.len || 400)) {
-        const p = alongHole(L, t, sign * (hg.off + (rnd() - 0.5) * 1.2));
-        const o = KIND.bush(2.4 + rnd() * 1.2); addTree(p.x, p.z, false, { ...o, noCollide: rnd() < 0.5 });
+      const rows = hg.thick ? [0, 3.5, 7] : [0];
+      for (const row of rows) for (let t = hg.from; t <= hg.to; t += 2.0 / (L.len || 400)) {
+        const p = alongHole(L, t, sign * (hg.off + row + (rnd() - 0.5) * 1.6));
+        const o = KIND.bush(hg.thick ? 3.5 + rnd() * 3 + row * 0.5 : 2.4 + rnd() * 1.2); addTree(p.x, p.z, false, { ...o, noCollide: rnd() < 0.5 });
       }
-      for (let t = hg.from; t <= hg.to; t += 4.5 / (L.len || 400)) {
+      if (hg.thick) for (let t = hg.from; t <= hg.to; t += 9 / (L.len || 400)) { const p = alongHole(L, t, sign * (hg.off + 6 + rnd() * 6)); const o = KIND.oak(9 + rnd() * 5); addTree(p.x, p.z, false, o); }
+      for (let t = hg.from; t <= (hg.thick ? -1 : hg.to); t += 4.5 / (L.len || 400)) {
         const p = alongHole(L, t, sign * (hg.off - 2.2));
         addTree(p.x, p.z, false, { h: 1.25, trunkR: 0.055, canopyR: 0.01, canopyY: 1, trunkH: 1.25, noCards: true, noCollide: true, tint: 1 });
       }
@@ -174,7 +177,10 @@ export function buildVegetation(course, tex, quality = {}) {
       const behind = ahead > 32 && Math.abs(gdx * Math.cos(endDir) - gdz * Math.sin(endDir)) < 140;
       // which side of the line is this point on? (left normal of the hole direction at the nearest point)
       const fr = alongHole(L, t, 0); const leftness = (x - fr.x) * Math.cos(fr.dir) - (z - fr.z) * Math.sin(fr.dir);
-      const beyond = leftness > 0 ? (sc.woodland.beyondL != null ? sc.woodland.beyondL : sc.woodland.beyond) : (sc.woodland.beyondR != null ? sc.woodland.beyondR : sc.woodland.beyond);
+      const wl = sc.woodland;
+      const leftNear = wl.beyondL != null && t <= (wl.leftTo != null ? wl.leftTo : 2) && t >= (wl.leftFrom || 0);
+      const rightNear = wl.beyondR != null && t <= (wl.rightTo != null ? wl.rightTo : 2) && t >= (wl.rightFrom || 0);
+      const beyond = leftness > 0 ? (leftNear ? wl.beyondL : wl.beyond) : (rightNear ? wl.beyondR : wl.beyond);
       if (d < beyond && !behind) continue;
       if (behind && rnd() < 0.35) continue;
     }

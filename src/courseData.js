@@ -56,7 +56,26 @@ const GOSFIELD = [
       ],
       woodland: { beyond: 62, beyondR: 150, behindGreen: 1.1 },
     } },
-  { name: 'Lake Lookout', par: 4, yards: 370, bend: { at: 0.6, deg: 24 }, pond: { at: 0.86, side: 'L', rx: 18, rz: 22 }, bunkers: [{ green: 'R', rx: 6.5, rz: 4.5 }, { green: 'FR', rx: 5, rz: 4 }] },
+  { name: 'Lake Lookout', par: 4, yards: 370, bend: { at: 0.62, deg: 20 }, halfWidth: 18,
+    // Drone footage: thicket down the left to the big oak at 200, open right with oaks and a poplar
+    // row, the fairway climbs to a crest, then the reedy lake sits short-left of the green.
+    pond: { at: 0.8, off: 15, rx: 15, rz: 24 },
+    bunkers: [{ green: 'R', rx: 6.5, rz: 4 }],
+    green: { rx: 14, rz: 12 },
+    scenery: {
+      style: 'parkland', tufts: 0.3,
+      hedge: { side: 'L', from: 0.0, to: 0.5, off: 22, thick: true },
+      trees: [
+        { at: 0.1, off: -25, kind: 'oak', h: 18 }, { at: 0.34, off: -40, kind: 'oak', h: 12 },
+        { at: 0.5, off: -31, kind: 'poplar', h: 17 }, { at: 0.54, off: -35, kind: 'poplar', h: 18 }, { at: 0.58, off: -31, kind: 'poplar', h: 16 }, { at: 0.56, off: -44, kind: 'oak', h: 12 },
+        { at: 0.55, off: 24, kind: 'oak', h: 19 },        // the big tree left at 201
+        { at: 0.64, off: 31, kind: 'oak', h: 13 }, { at: 0.7, off: 40, kind: 'willow', h: 11 },
+        { at: 0.72, off: -28, kind: 'oak', h: 11 }, { at: 0.9, off: -26, kind: 'oak', h: 13 },
+        { at: 1.04, off: -12, kind: 'oak', h: 12 }, { at: 1.05, off: 26, kind: 'oak', h: 11 }, { at: 1.1, off: -32, kind: 'poplar', h: 17 },
+        { at: 1.13, off: 8, kind: 'oak', h: 14 }, { at: 1.16, off: -20, kind: 'oak', h: 13 },
+      ],
+      woodland: { beyondL: 30, leftTo: 0.52, beyond: 150, behindGreen: 1.3 },
+    } },
   { name: 'Cottage Park', par: 5, yards: 539, bend: { at: 0.55, deg: 18 }, bunkers: [] },
   { name: 'Lake Wood', par: 3, yards: 187, pond: { at: 0.28, side: 'C', rx: 24, rz: 17 }, bunkers: [{ green: 'FR', rx: 5, rz: 4 }] },
   { name: 'Pimlico', par: 5, yards: 534, bunkers: [{ at: 0.44, side: 'L', rx: 8, rz: 5 }, { at: 0.58, side: 'L', rx: 8, rz: 5 }, { green: 'B', rx: 6, rz: 4.5 }] },
@@ -125,7 +144,7 @@ export function makeHoleFromSpec(spec, n) {
   let pond = null;
   if (spec.pond) {
     const q = spec.pond;
-    const off = q.side === 'C' ? 0 : (q.side === 'L' ? 1 : -1) * (halfWidth + q.rx * 0.75);
+    const off = q.off != null ? q.off : q.side === 'C' ? 0 : (q.side === 'L' ? 1 : -1) * (halfWidth + q.rx * 0.75);
     const p = sideOf(q.at, off);
     pond = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.rot + (q.side === 'C' ? Math.PI / 2 : 0) };
   }
