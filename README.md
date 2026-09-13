@@ -7,12 +7,39 @@ and every sound.
 
 ## Run
 
+There is no build step; three.js is vendored under `vendor/`. Any static file server works:
+
 ```bash
-python3 -m http.server 8765 -d /Users/oliver/golf-pov
+npm start          # python3 -m http.server 8765, reachable from the LAN
 ```
 
-Then open http://localhost:8765 (or `http://<this-mac's-LAN-IP>:8765` on a
-phone on the same Wi-Fi). No build step; three.js is vendored under `vendor/`.
+Then open http://localhost:8765, or `http://<this-machine's-LAN-IP>:8765` on a
+phone on the same Wi-Fi.
+
+To play it on a phone with no computer running, enable GitHub Pages once
+(repo **Settings → Pages → Source: GitHub Actions**). Every push to `main` then
+publishes the game via `.github/workflows/pages.yml`.
+
+## Develop
+
+```bash
+npm install            # eslint + playwright (dev only); links vendor/three so the node tools run
+npm run lint           # eslint, built-in rules only (undefined names, unused vars, unreachable code)
+npm run check          # headless checks: both courses, every hole, club table, random-shot fuzz
+npm test               # lint + check
+npm run test:browser   # boots the real game in headless Chromium, desktop and phone profiles
+```
+
+`test:browser` needs a Playwright Chromium: run `npx playwright install chromium`
+once on a new machine. `SMOKE_SHOT=shot.png npm run test:browser` also saves a screenshot.
+`.github/workflows/ci.yml` runs all of the above on every push.
+
+Working from Claude Code on the web or the mobile app: `.claude/hooks/session-start.sh`
+installs the dev dependencies when the session starts, so lint and tests work straight away.
+
+Other tools: `npm run holes` lists both courses, `npm run calibrate` prints carry per
+club, `npm run fuzz` fires 220 random shots on every hole (`COURSE=1` for Gosfield),
+`npm run perf` times course build and shot sims.
 
 ## Progression
 
@@ -42,3 +69,4 @@ Pick or create a player on the start screen (profiles live in the browser's loca
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
 - `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.
 - `src/main.js` — game states, cameras, input, HUD wiring. `window.__game.step(sec)` advances the sim by hand for debugging; `__game.paused = true` stops the loop.
+- `tools/test.mjs` — the `npm run check` suite; `tools/smoke.mjs` — the headless browser boot test.
