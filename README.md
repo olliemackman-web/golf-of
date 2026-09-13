@@ -55,8 +55,8 @@ Pick or create a player on the start screen (profiles live in the browser's loca
 | Pro shop | U | SHOP |
 | Target power (moves the landing ring, marks the meter) | W / S | slider |
 | Club | Q / E / wheel | ◀ ▶ |
-| Swing: start, stop the power bar, then strike when the accuracy marker is in the green (it ping-pongs) | Space ×3 | SWING ×3 |
-| Putt: drag back for pace, left/right for line (the dashed line turns green when it drops), release, then strike in the green | mouse drag | touch drag |
+| Swing: start, stop the power bar, then strike when the accuracy marker is in the green (it ping-pongs until you press) | Space ×3 | SWING ×3 |
+| Putt: drag back for pace, left/right for line (the dashed line turns green when it drops); lift off and adjust as often as you like, then PUTT, then strike in the green | mouse drag, Space | touch drag, PUTT |
 | Ball camera | C | CAM |
 | Restart hole | R | — |
 

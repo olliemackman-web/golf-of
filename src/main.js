@@ -271,7 +271,7 @@ class Game {
     this.hud.setCamTag('');
     this.updateLieHud();
     this.previewDirty = true;
-    if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line — release to putt');
+    if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line &nbsp; <b>W / S</b> fine-tune pace &nbsp; <b>SPACE</b> putt when ready');
     else this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>V</b> view &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
     this.hud.setSwingLabel(this.club.putter ? 'PUTT' : 'ADDRESS'); this.hud.setAimControls(true);
   }
@@ -284,7 +284,7 @@ class Game {
     this.golfer.group.visible = true;
   }
 
-  /** Release of the putting drag: go straight to the accuracy bar with the pulled-back pace. */
+  /** PUTT pressed: go straight to the accuracy bar with the pace and line set while aiming. */
   commitPutt() {
     if (this.state !== 'aim' || !this.club.putter) return;
     this.placePutterRig();
@@ -479,24 +479,21 @@ class Game {
     this.canvas.addEventListener('pointerdown', (e) => {
       if (this.state === 'title' || (this.menus && this.menus.open)) return;
       dragging = true; lx = e.clientX; try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
-      drag = { sx: e.clientX, sy: e.clientY, yaw: this.aimYaw, power: this.planPower, moved: false, putt: this.state === 'aim' && this.club.putter };
+      drag = { sx: e.clientX, sy: e.clientY, yaw: this.aimYaw, power: this.planPower, putt: this.state === 'aim' && this.club.putter };
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (!dragging || this.state !== 'aim') return;
       const dx = e.clientX - lx; lx = e.clientX;
       if (drag && drag.putt) {
-        // pull back for pace, slide sideways for the line
+        // pull back for pace, slide sideways for the line; each drag adjusts from where the last one left off
         const pull = e.clientY - drag.sy, side = e.clientX - drag.sx;
-        if (Math.hypot(pull, side) > 8) drag.moved = true;
         this.planPower = clamp(drag.power + pull / (window.innerHeight * 0.45), 0.08, 1);
         this.aimYaw = drag.yaw - side * (this.isMobile ? 0.0022 : 0.0016);
         this.previewDirty = true; this.placePutterRig();
       } else { this.aimYaw -= dx * 0.0032; this.previewDirty = true; }
     });
-    const release = () => {
-      const d = drag; dragging = false; drag = null;
-      if (d && d.putt && d.moved && this.state === 'aim' && this.club.putter) { this.updatePreview(); this.commitPutt(); }
-    };
+    // Lifting the finger keeps the pace and line; the PUTT button (or Space) commits the putt.
+    const release = () => { dragging = false; drag = null; if (this.state === 'aim' && this.previewDirty) this.updatePreview(); };
     this.canvas.addEventListener('pointerup', release);
     this.canvas.addEventListener('pointercancel', () => { dragging = false; drag = null; });
     window.addEventListener('blur', () => { this.keys = {}; dragging = false; });
@@ -569,7 +566,7 @@ class Game {
   meterTime() { return this.club.putter ? T_METER_PUTT : T_METER; }
   accTime() { return this.club.putter ? T_ACC_PUTT : T_ACC; }
 
-  /** Club pauses at the top; the accuracy marker ping-pongs until the player strikes. */
+  /** Club pauses at the top; the accuracy marker ping-pongs for as long as it takes the player to strike. */
   startAccuracy() {
     const s = this.swing;
     s.phase = 'acc'; s.t = 0; s.pos = 0; s.dir = 1; s.sweeps = 0;
@@ -718,8 +715,7 @@ class Game {
     } else if (s.phase === 'acc') {
       s.pos += s.dir * dt / this.accTime();
       if (s.pos >= 1) { s.pos = 1; s.dir = -1; s.sweeps++; } else if (s.pos <= 0) { s.pos = 0; s.dir = 1; s.sweeps++; }
-      this.hud.accuracy({ pos: s.pos, hit: null });
-      if (s.sweeps >= 4) this.strike(); // never pressed: take it where it is
+      this.hud.accuracy({ pos: s.pos, hit: null }); // no timeout: it keeps going until STRIKE is pressed
     }
     this.golfer.update(dt);
     this.updateAddressCam(dt);

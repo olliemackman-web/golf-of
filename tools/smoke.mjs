@@ -54,6 +54,21 @@ try {
   await page.waitForFunction(() => window.__game.state !== 'title', null, { timeout: 10000 });
   const state = await page.evaluate(() => { window.__game.paused = true; return window.__game.step(8); });
   console.log(`played 8 simulated seconds, game state now "${state}"`);
+
+  // Putting: a drag sets pace and line but does not commit; PUTT commits; the accuracy bar waits for the strike.
+  await page.evaluate(() => { const g = window.__game, pin = g.L.pin; g.newHole(); g.ball.place(pin.x + 3, pin.z); g.autoClub(); g.solvePlan(); g.enterAim(); g.step(0.3); });
+  const before = await page.evaluate(() => ({ state: window.__game.state, club: window.__game.club.id, power: window.__game.planPower }));
+  if (before.club !== 'PT') errors.push(`expected the putter on the green, got ${before.club}`);
+  const vp = page.viewportSize(); const cx = vp.width / 2, cy = vp.height / 2;
+  await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx, cy + 120, { steps: 6 }); await page.mouse.up();
+  const after = await page.evaluate(() => { const g = window.__game; g.step(0.2); return { state: g.state, power: g.planPower }; });
+  if (after.state !== 'aim') errors.push(`releasing the putting drag committed the putt (state ${after.state})`);
+  if (!(after.power > before.power)) errors.push(`pulling back did not raise the pace (${before.power} -> ${after.power})`);
+  const acc = await page.evaluate(() => { const g = window.__game; g.action(); g.step(0.2); const a = { state: g.state, phase: g.swing.phase }; g.step(12); a.later = g.swing.phase; g.action(); g.step(2); a.final = g.state; return a; });
+  if (acc.state !== 'swing' || acc.phase !== 'acc') errors.push(`PUTT did not open the accuracy bar (${acc.state}/${acc.phase})`);
+  if (acc.later !== 'acc') errors.push(`accuracy bar did not wait for the strike (phase ${acc.later} after 12s)`);
+  if (acc.final === 'swing' || acc.final === 'aim') errors.push(`strike did not send the putt (state ${acc.final})`);
+  console.log(`putting: drag kept aim (pace ${before.power.toFixed(2)} -> ${after.power.toFixed(2)}), PUTT opened the accuracy bar, it waited 12s, strike -> "${acc.final}"`);
   if (process.env.SMOKE_SHOT) { await page.screenshot({ path: process.env.SMOKE_SHOT, timeout: 180000 }); console.log('screenshot ' + process.env.SMOKE_SHOT); }
   ok = errors.length === 0;
 } catch (e) {
