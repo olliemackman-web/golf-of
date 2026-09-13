@@ -35,9 +35,11 @@ class Game {
     const small = Math.min(window.innerWidth, window.innerHeight) < 600 || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
     this.isMobile = coarse || small;
     this.quality = this.isMobile
-      ? { dpr: 1, shadow: 2048, shadowRange: 70, bloom: false, msaa: 0, veg: { cardsBroad: 34, cardsConifer: 44, tufts: 18000, reeds: 3500 } }
-      : { dpr: Math.min(window.devicePixelRatio, 1.5), shadow: 4096, shadowRange: 95, bloom: true, msaa: 4, veg: {} };
-    const r = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: !this.isMobile, powerPreference: 'high-performance' });
+      ? { dpr: Math.min(window.devicePixelRatio, 1.5), shadow: 2048, shadowRange: 70, bloom: false, msaa: 0, veg: { cardsBroad: 34, cardsConifer: 44, tufts: 18000, reeds: 3500, aa: true } }
+      : { dpr: Math.min(window.devicePixelRatio, 1.75), shadow: 4096, shadowRange: 95, bloom: true, msaa: 4, veg: { aa: true } };
+    // antialias on for both tiers: on phones the default framebuffer MSAA is nearly free and it is what
+    // stops the foliage and grass edges shimmering; alpha-to-coverage rides on it.
+    const r = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
     r.setPixelRatio(this.quality.dpr);
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -157,7 +159,7 @@ class Game {
     const u = (this.profile && this.profile.upgrades) || {};
     const f = u.forgive || 0, pt = u.putting || 0;
     return {
-      woodSpeed: 1 + 0.03 * (u.power || 0), ironSpeed: 1 + 0.03 * (u.irons || 0),
+      woodSpeed: 1 + 0.10 * (u.power || 0), ironSpeed: 1 + 0.10 * (u.irons || 0),
       sideMul: 1 - 0.1 * f, accWindow: ACC_WINDOW * (1 + 0.2 * f),
       captureBonus: 0.15 * pt, puttErr: 1 - 0.1 * pt,
       spinPower: 0.4 + 0.12 * (u.spin || 0), spin: this.spinSel,
@@ -495,7 +497,7 @@ class Game {
     const yaw = this.aimYaw - (params.dirErr + jitter) * Math.PI / 180; // + = right of the line
     const dir = { x: Math.sin(yaw), z: Math.cos(yaw) };
     const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
-    this.ball.launch(dir, params.speed, params.loft, params.back, params.side);
+    this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.shotSpin = { x: this.spinSel.x, y: this.spinSel.y }; // keep for the late-accuracy recompute
     this.audio.hit(s.power, this.club);

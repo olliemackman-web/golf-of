@@ -162,7 +162,7 @@ export function buildVegetation(course, tex, quality = {}) {
   const cardGeo = new THREE.PlaneGeometry(1, 1);
   const makeCards = (texture, list, conifer) => {
     let count = 0; for (const t of list) count += conifer ? CARDS_C : CARDS_B;
-    const mat = new THREE.MeshStandardMaterial({ map: texture, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
+    const mat = new THREE.MeshStandardMaterial({ map: texture, alphaTest: quality.aa ? 0.3 : 0.45, alphaToCoverage: !!quality.aa, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
     addWind(mat, { amp: 0.14, freq: 0.9 });
     const mesh = new THREE.InstancedMesh(cardGeo, mat, count);
     mesh.castShadow = true; mesh.receiveShadow = true;
@@ -212,7 +212,7 @@ export function buildVegetation(course, tex, quality = {}) {
     const merged = mergeGeos([a, b, c]);
     return merged;
   })();
-  const tuftMat = new THREE.MeshStandardMaterial({ map: tex.blade, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1 });
+  const tuftMat = new THREE.MeshStandardMaterial({ map: tex.blade, alphaTest: quality.aa ? 0.35 : 0.5, alphaToCoverage: !!quality.aa, side: THREE.DoubleSide, roughness: 1 });
   addWind(tuftMat, { byUv: true, amp: 0.09, freq: 1.4 });
   const tuftSpots = [];
   for (let i = 0; i < 260000; i++) {

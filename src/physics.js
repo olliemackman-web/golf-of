@@ -10,9 +10,9 @@ export const HOLE_R = 0.054;
 
 // Per-surface response: restitution, sliding friction, rolling deceleration (m/s^2)
 const SURFACE = {
-  [SURF.ROUGH]:   { e: 0.30, mu: 0.55, roll: 4.2, speed: 0.82, spin: 0.45 },
-  [SURF.FAIRWAY]: { e: 0.36, mu: 0.42, roll: 2.7, speed: 1.0, spin: 1.0 },
-  [SURF.TEE]:     { e: 0.36, mu: 0.42, roll: 2.7, speed: 1.0, spin: 1.0 },
+  [SURF.ROUGH]:   { e: 0.28, mu: 0.6, roll: 5.2, speed: 0.82, spin: 0.45 },
+  [SURF.FAIRWAY]: { e: 0.3, mu: 0.55, roll: 4.5, speed: 1.0, spin: 1.0 },
+  [SURF.TEE]:     { e: 0.3, mu: 0.55, roll: 4.5, speed: 1.0, spin: 1.0 },
   [SURF.GREEN]:   { e: 0.38, mu: 0.48, roll: 0.62, speed: 1.0, spin: 1.0 },
   [SURF.SAND]:    { e: 0.10, mu: 0.85, roll: 6.5, speed: 0.72, spin: 0.35 },
   [SURF.WATER]:   { e: 0.0, mu: 1, roll: 9, speed: 0.5, spin: 0.2 },
@@ -46,6 +46,7 @@ export class Ball {
     this.airTime = 0; this.maxHeight = 0; this.carry = null; this.launchPos = null; this.bounces = 0;
     this.timeSinceLaunch = 0; this.treeCooldown = 0; this.slowTime = 0;
     this.captureBonus = 0; // putting upgrade: the cup takes slightly faster balls
+    this.landSpin = 0;     // -1 topspin (runs) .. +1 backspin (sits) — only acts on landing and roll
   }
 
   place(x, z) {
@@ -58,7 +59,8 @@ export class Ball {
    * Launch: dir = horizontal unit vector, speed m/s, loft deg, backspin rpm,
    * sidespin rpm (+ = ball curves right for a right-hander).
    */
-  launch(dir, speed, loftDeg, backRpm, sideRpm) {
+  launch(dir, speed, loftDeg, backRpm, sideRpm, landSpin = 0) {
+    this.landSpin = landSpin;
     const loft = loftDeg * Math.PI / 180;
     this.vel.x = dir.x * speed * Math.cos(loft); this.vel.z = dir.z * speed * Math.cos(loft); this.vel.y = speed * Math.sin(loft);
     // backspin axis = dir x up ; sidespin axis = -up (slice)
@@ -138,7 +140,17 @@ export class Ball {
     const jmax = S.mu * (1 + e) * -vn;
     const j = Math.min(jmax, cs * 2 / 7);
     tx -= cx / cs * j; ty -= cy / cs * j; tz -= cz / cs * j;
-    const vnNew = -vn * e;
+    // Landing spin: backspin grips and kills the forward speed (max = it sits, even spins back);
+    // topspin skids on with a low bounce. First bounce strongest, then fading.
+    const k = this.landSpin, bf = this.bounces === 1 ? 1 : this.bounces === 2 ? 0.45 : 0.15;
+    let eff = e;
+    // the club's own backspin grips too: wedges check up, a driver barely does
+    const rpm = Math.hypot(s.x, s.y, s.z) * 60 / (2 * Math.PI); // spin is still the in-flight value here
+    const gripSpin = Math.min(0.65, Math.max(0, (rpm - 2200) / 8000)) * bf * S.spin;
+    tx *= 1 - gripSpin; tz *= 1 - gripSpin;
+    if (k > 0) { const grip = 1 - 0.85 * k * bf; tx *= grip; tz *= grip; if (k > 0.75 && this.bounces === 1) { tx -= (v.x - vn * n.x) * 0.12 * (k - 0.75) / 0.25; tz -= (v.z - vn * n.z) * 0.12 * (k - 0.75) / 0.25; } }
+    else if (k < 0) { const run = 1 + 0.22 * -k * bf; tx /= 1 - gripSpin; tz /= 1 - gripSpin; tx *= run; tz *= run; eff = e * (1 - 0.45 * -k); }
+    const vnNew = -vn * eff;
     v.x = tx + vnNew * n.x; v.y = ty + vnNew * n.y; v.z = tz + vnNew * n.z;
     // spin: partly killed by the impact, partly converted to roll
     const keep = 0.5 * S.spin;
@@ -165,7 +177,8 @@ export class Ball {
     const gx = -G * n.y * n.x, gy = -G * (1 - n.y * n.y), gz = -G * n.y * n.z;
     const sp = Math.hypot(v.x, v.y, v.z);
     // rolling resistance opposes motion; grows a bit at low speed (grass grain)
-    const dec = S.roll * (1 + (sp < 0.6 ? 0.6 * (1 - sp / 0.6) : 0));
+    const ls = this.landSpin || 0;
+    const dec = S.roll * (1 + (sp < 0.6 ? 0.6 * (1 - sp / 0.6) : 0)) * (ls < 0 ? 1 - 0.35 * -ls : 1 + 0.6 * ls);
     if (sp > 1e-4) {
       const dv = Math.min(sp, dec * h);
       v.x -= v.x / sp * dv; v.y -= v.y / sp * dv; v.z -= v.z / sp * dv;
@@ -231,12 +244,14 @@ export function shotParams(club, power, accuracy, lie, mods = {}) {
   speedMul *= club.wood ? (mods.woodSpeed || 1) : (mods.ironSpeed || 1);
   const p = 0.25 + 0.75 * power;
   const speed = club.speed * p * speedMul;
-  // spin.y: +1 = full backspin (higher, stops), -1 = topspin (lower, runs); spin.x: -1 draw .. +1 fade
-  const loft = club.loft + (lie === SURF.ROUGH ? 2 : 0) + (1 - power) * 2 + spin.y * spinPower * 2.5;
-  const back = Math.max(club.spin * 0.25, club.spin * (0.6 + 0.4 * power) * spinMul * (1 + spin.y * spinPower * 0.65));
+  // spin.y: +1 = backspin (sits on landing), -1 = topspin (runs on landing) — the flight itself is unchanged.
+  // spin.x: -1 draw .. +1 fade
+  const loft = club.loft + (lie === SURF.ROUGH ? 2 : 0) + (1 - power) * 2;
+  const back = club.spin * (0.6 + 0.4 * power) * spinMul;
+  const land = spin.y * spinPower * (lie === SURF.ROUGH ? 0.5 : 1);
   const side = accuracy * (600 + club.speed * 22) * spinMul * (mods.sideMul == null ? 1 : mods.sideMul) + spin.x * spinPower * (900 + club.speed * 10) * spinMul;
   const dirErr = accuracy * 3 * (mods.sideMul == null ? 1 : mods.sideMul) - spin.x * spinPower * 1.2; // shape starts a touch inside the line
-  return { speed, loft, back, side, dirErr };
+  return { speed, loft, back, side, dirErr, land };
 }
 
 /** Simulate a full shot from the current ball state on a private clone. Returns the path + result. */
@@ -245,7 +260,7 @@ export function simulateShot(course, from, dir, params, opts = {}) {
   b.pos.x = from.x; b.pos.y = from.y; b.pos.z = from.z;
   b.wind.x = opts.wind ? opts.wind.x : 0; b.wind.z = opts.wind ? opts.wind.z : 0;
   b.trees = opts.trees || null; b.hole = opts.hole || null;
-  b.launch(dir, params.speed, params.loft, params.back, params.side);
+  b.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
   const path = [{ x: b.pos.x, y: b.pos.y, z: b.pos.z }];
   const dt = 1 / 120; let t = 0, lastPathT = 0;
   const maxT = opts.maxT || 40;

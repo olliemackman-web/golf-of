@@ -2,8 +2,8 @@
 const KEY = 'riverbend-profiles-v1';
 
 export const UPGRADES = [
-  { id: 'power', name: 'Driver & woods', desc: '+3% clubhead speed per level — longer drives', max: 5 },
-  { id: 'irons', name: 'Irons & wedges', desc: '+3% clubhead speed per level', max: 5 },
+  { id: 'power', name: 'Driver & woods', desc: '+10% clubhead speed per level — longer drives', max: 5 },
+  { id: 'irons', name: 'Irons & wedges', desc: '+10% clubhead speed per level', max: 5 },
   { id: 'forgive', name: 'Forgiveness', desc: 'Wider accuracy window and tamer hooks & slices', max: 5 },
   { id: 'putting', name: 'Putting', desc: 'The cup catches faster putts, steadier stroke', max: 5 },
   { id: 'spin', name: 'Spin control', desc: 'Stronger draw, fade, backspin and topspin', max: 5 },

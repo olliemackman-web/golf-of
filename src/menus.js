@@ -47,7 +47,7 @@ export class Menus {
     this.show('spin', `<div class="mhead"><div><div class="sub">SHOT SHAPE</div><div class="mtitle">Ball spin</div></div><div class="sdesc" id="spinlabel"></div></div>
       <div class="spad" id="spad"><div class="sball"><div class="sdot" id="sdot"></div></div><span class="stag t">BACK</span><span class="stag b">TOP</span><span class="stag l">DRAW</span><span class="stag r">FADE</span></div>
       <div class="spre"><button data-spin="0,0.9">BACKSPIN</button><button data-spin="0,-0.9">TOPSPIN</button><button data-spin="-0.9,0">DRAW</button><button data-spin="0.9,0">FADE</button><button data-spin="0,0">NONE</button></div>
-      <div class="mfoot"><span class="sdesc">Shown on the aim line. Resets after each shot.</span><button class="btn" id="mclose">DONE</button></div>`);
+      <div class="mfoot"><span class="sdesc">Backspin sits where it lands, topspin runs on. Shown on the aim line; resets after each shot.</span><button class="btn" id="mclose">DONE</button></div>`);
     const pad = this.el.querySelector('#spad'), dot = this.el.querySelector('#sdot'), label = this.el.querySelector('#spinlabel');
     const R = 70;
     const paint = () => { dot.style.left = `${50 + spin.x * 40}%`; dot.style.top = `${50 - spin.y * 40}%`; label.textContent = describeSpin(spin); onChange(); };

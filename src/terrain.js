@@ -9,7 +9,7 @@ import * as T from './textures.js';
 export function buildTextures() {
   const grassC = T.grassTexture({ seed: 7 });
   const grass = T.makeTex(grassC);
-  const grassNormal = T.makeTex(T.normalFromCanvas(grassC, 1.6), { srgb: false });
+  const grassNormal = T.makeTex(T.normalFromCanvas(grassC, 1.1), { srgb: false });
   const sand = T.makeTex(T.sandTexture());
   const noise = T.makeTex(T.noiseTexture(), { srgb: false });
   const bark = T.makeTex(T.barkTexture());
@@ -51,7 +51,7 @@ export function buildTerrain(course, tex) {
 
   const normalTiles = size / 2.6;
   tex.grassNormal.repeat.set(normalTiles, normalTiles);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0, normalMap: tex.grassNormal, normalScale: new THREE.Vector2(0.55, 0.55) });
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0, normalMap: tex.grassNormal, normalScale: new THREE.Vector2(0.32, 0.32) });
   // Stripes run along the first fairway segment.
   const s0 = course.layout.spline[1], s1 = course.layout.spline[3];
   const sd = new THREE.Vector2(s1[0] - s0[0], s1[1] - s0[1]).normalize();
@@ -78,7 +78,7 @@ float rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 vec3 noiseA = texture2D(tNoise, wuv / 43.0).rgb;
 vec3 noiseB = texture2D(tNoise, wuv / 7.3).rgb;
 float camDist = length(vWorldPos - cameraPosition);
-float farMix = smoothstep(25.0, 140.0, camDist);
+float farMix = smoothstep(12.0, 90.0, camDist);
 vec3 g1 = texture2D(tGrass, wuv / 2.4).rgb;
 vec3 g2 = texture2D(tGrass, wuv / 11.0 + 0.37).rgb;
 vec3 gFar = texture2D(tGrass, wuv / 37.0 + 0.11).rgb;
@@ -100,7 +100,7 @@ diffuseColor.rgb *= splat;`)
 roughnessFactor = mix(0.96, 0.82, sand);
 roughnessFactor = mix(roughnessFactor, 0.6, water);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(20.0, 110.0, camDist) * 0.85 + sand * 0.5));`);
+normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(8.0, 60.0, camDist) * 0.9 + sand * 0.5));`);
   };
   mat.customProgramCacheKey = () => 'terrain-splat';
   const mesh = new THREE.Mesh(geo, mat);

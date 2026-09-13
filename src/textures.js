@@ -4,7 +4,7 @@ import { mulberry32, fbm, clamp } from './noise.js';
 
 function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 
-function makeTex(c, { srgb = true, repeat = true, aniso = 8 } = {}) {
+function makeTex(c, { srgb = true, repeat = true, aniso = 16 } = {}) {
   const t = new THREE.CanvasTexture(c);
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; }
@@ -17,7 +17,7 @@ function makeTex(c, { srgb = true, repeat = true, aniso = 8 } = {}) {
 function hsl(h, s, l) { return `hsl(${h},${s}%,${l}%)`; }
 
 /** Turf: noisy base + thousands of tiny blade strokes, tileable. */
-export function grassTexture({ size = 512, seed = 7, hue = 95, sat = 45, light = 30, blades = 14000, period = 6 } = {}) {
+export function grassTexture({ size = 512, seed = 7, hue = 95, sat = 45, light = 30, blades = 9000, period = 6 } = {}) {
   const c = canvas(size, size), ctx = c.getContext('2d');
   const rnd = mulberry32(seed);
   const img = ctx.createImageData(size, size), d = img.data;
@@ -37,8 +37,8 @@ export function grassTexture({ size = 512, seed = 7, hue = 95, sat = 45, light =
     const len = 3 + rnd() * 7, ang = -Math.PI / 2 + (rnd() - 0.5) * 1.4;
     const l = light + 6 + rnd() * 22, h = hue + (rnd() - 0.5) * 22;
     ctx.strokeStyle = hsl(h, sat + rnd() * 15, l);
-    ctx.lineWidth = 0.6 + rnd() * 1.1;
-    ctx.globalAlpha = 0.45 + rnd() * 0.4;
+    ctx.lineWidth = 1.0 + rnd() * 1.4;
+    ctx.globalAlpha = 0.28 + rnd() * 0.3;
     for (const [ox, oy] of [[0, 0], [size, 0], [-size, 0], [0, size], [0, -size]]) {
       ctx.beginPath(); ctx.moveTo(x + ox, y + oy); ctx.lineTo(x + ox + Math.cos(ang) * len, y + oy + Math.sin(ang) * len); ctx.stroke();
     }
