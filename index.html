@@ -65,6 +65,30 @@
   .afill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(to right,#ff5a3c,#ffd23c 55%,#c9ff5b)}
   .amark{position:absolute;top:-2px;bottom:-2px;width:3px;margin-left:-1px;background:#fff;box-shadow:0 0 6px #fff}
   .abar.good .alabel b{color:#c9ff5b}.abar.bad .alabel b{color:#ff8a7a}
+  .lie{display:flex;justify-content:space-between;gap:12px}.coins{color:#ffd23c;font-weight:700;letter-spacing:.04em}
+  .cbtn.active{border-color:#c9ff5b;color:#c9ff5b}
+  #modal{position:fixed;inset:0;z-index:12;display:none;align-items:center;justify-content:center;background:rgba(4,8,12,.55);pointer-events:auto}
+  #modal.show{display:flex}
+  .mpanel{width:min(520px,92vw);max-height:88vh;overflow:auto;background:rgba(8,14,20,.92);border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:22px 24px;backdrop-filter:blur(12px)}
+  .mhead{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}.mtitle{font-size:24px;font-weight:800}
+  .mcoins{font-size:22px;font-weight:800;color:#ffd23c;text-align:right}.mcoins small{display:block;font-size:9px;letter-spacing:.2em;opacity:.7;color:#fff}
+  .srow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)}
+  .sname{font-weight:700;font-size:14px;display:flex;align-items:center;gap:10px}.sdesc{font-size:11px;opacity:.7;line-height:1.5}
+  .pips{display:inline-flex;gap:3px}.pips i{width:10px;height:10px;border-radius:2px;background:rgba(255,255,255,.15)}.pips i.on{background:#c9ff5b}
+  .btn.small{padding:9px 16px;font-size:11px;white-space:nowrap}.btn.dim{opacity:.35}.maxed{font-size:11px;letter-spacing:.2em;color:#c9ff5b;font-weight:700;padding:0 8px}
+  .mfoot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px}
+  .spad{position:relative;width:190px;height:190px;margin:8px auto 4px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#fff,#cfd4d8 60%,#8d9399);box-shadow:inset 0 -10px 24px rgba(0,0,0,.25),0 10px 30px rgba(0,0,0,.4);touch-action:none;cursor:crosshair}
+  .sball{position:absolute;inset:0}.sdot{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#c9ff5b;box-shadow:0 0 0 3px rgba(0,0,0,.35);left:50%;top:50%}
+  .stag{position:absolute;font-size:9px;letter-spacing:.2em;color:#0b1118;opacity:.6;font-weight:700}.stag.t{top:8px;left:50%;transform:translateX(-50%)}.stag.b{bottom:8px;left:50%;transform:translateX(-50%)}.stag.l{left:10px;top:50%;transform:translateY(-50%)}.stag.r{right:10px;top:50%;transform:translateY(-50%)}
+  .spre{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:10px}.spre button{border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font:700 10px/1 inherit;letter-spacing:.14em;padding:9px 11px;border-radius:999px;cursor:pointer}
+  .plist{display:flex;flex-direction:column;gap:8px;max-height:44vh;overflow:auto;margin:6px 0 14px;text-align:left}
+  .pcard{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.05)}
+  .pmain{flex:1;min-width:0}.pname{font-weight:800;font-size:16px}.pmeta{font-size:11px;opacity:.75;margin-top:2px}.pups{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .pup{font-size:9px;letter-spacing:.1em;opacity:.7;background:rgba(255,255,255,.08);padding:3px 6px;border-radius:4px}.pup b{color:#c9ff5b}
+  .pdel{background:none;border:0;color:rgba(255,255,255,.4);font-size:14px;cursor:pointer;padding:6px}.pdel:hover{color:#ff8a7a}
+  .pempty{font-size:12px;opacity:.6;text-align:center;padding:10px}
+  .pnew{display:flex;gap:8px}.pnew input{flex:1;padding:12px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:14px;outline:none}.pnew input:focus{border-color:#c9ff5b}
+  .coin{color:#ffd23c}
   .controls{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;pointer-events:auto}
   .cbtn{pointer-events:auto;cursor:pointer;border:1px solid rgba(255,255,255,.22);background:rgba(8,14,20,.6);backdrop-filter:blur(8px);color:#fff;font:700 11px/1 "Helvetica Neue",Inter,Arial,sans-serif;letter-spacing:.14em;padding:12px 14px;border-radius:999px;touch-action:manipulation}
   .cbtn:active{background:rgba(201,255,91,.35)}
@@ -86,7 +110,7 @@
     .msg{font-size:16px;bottom:24%;white-space:normal;text-align:center;max-width:80vw}
     .camtag{top:auto;bottom:92px;font-size:9px}
     .abar{bottom:80px;width:min(300px,62vw)}.atrack{height:14px}
-    .controls{bottom:12px;gap:6px}.cbtn{padding:11px 11px;font-size:10px}.cbtn.big{padding:15px 24px;font-size:13px}
+    .controls{bottom:12px;gap:5px}.cbtn{padding:11px 9px;font-size:9px}.mpanel{padding:16px}.spad{width:150px;height:150px}.cbtn.big{padding:15px 24px;font-size:13px}
     .target{right:10px;bottom:86px;width:130px;padding:6px 10px 4px}
     .panel{padding:22px 20px;max-width:88vw}.panel h1{font-size:28px}.panel .keys{grid-template-columns:auto 1fr;font-size:11px;gap:4px 10px}.panel p{font-size:12px}
   }
@@ -102,6 +126,7 @@
 <body>
 <canvas class="gl" id="gl"></canvas>
 <div id="hud"></div>
+<div id="modal"></div>
 <div id="overlay">
   <div class="panel" id="panel">
     <h1>RIVERBEND</h1>

@@ -45,6 +45,7 @@ export class Ball {
     this.n = { x: 0, y: 1, z: 0 };
     this.airTime = 0; this.maxHeight = 0; this.carry = null; this.launchPos = null; this.bounces = 0;
     this.timeSinceLaunch = 0; this.treeCooldown = 0; this.slowTime = 0;
+    this.captureBonus = 0; // putting upgrade: the cup takes slightly faster balls
   }
 
   place(x, z) {
@@ -201,7 +202,7 @@ export class Ball {
     const dx = p.x - H.x, dz = p.z - H.z, d = Math.hypot(dx, dz);
     if (d < HOLE_R) {
       // Capture if slow enough that the ball drops before it crosses the cup.
-      const vmax = 1.7 + (HOLE_R - d) * 14;
+      const vmax = 1.7 + this.captureBonus + (HOLE_R - d) * 14;
       if (sp < vmax) { this.mode = 'holed'; this.events.push({ type: 'holed' }); p.x = H.x; p.z = H.z; v.x = v.y = v.z = 0; return; }
       // Lip-out: deflect and lose speed.
       if (d > HOLE_R * 0.55) {
@@ -220,19 +221,21 @@ export class Ball {
  * power 0..1, accuracy -1..1 (negative = hook/draw, positive = slice/fade),
  * lie = surface id the ball sits on.
  */
-export function shotParams(club, power, accuracy, lie) {
+export function shotParams(club, power, accuracy, lie, mods = {}) {
   const S = surfaceProps(lie);
-  // putter: steep curve so the bottom of the meter gives genuinely soft strokes for tap-ins
-  if (club.putter) return { speed: club.speed * Math.pow(power, 1.7), loft: 0, back: 0, side: 0, dirErr: accuracy * 2.5 };
+  const spin = mods.spin || { x: 0, y: 0 }, spinPower = mods.spinPower == null ? 0.5 : mods.spinPower;
+  if (club.putter) return { speed: club.speed * Math.pow(power, 1.7), loft: 0, back: 0, side: 0, dirErr: accuracy * 2.5 * (mods.puttErr == null ? 1 : mods.puttErr) };
   let speedMul = S.speed, spinMul = S.spin;
   if (lie === SURF.SAND && club.sand) { speedMul = 0.9; spinMul = 0.7; }
   if (lie === SURF.SAND && club.wood) { speedMul = 0.45; spinMul = 0.3; }
+  speedMul *= club.wood ? (mods.woodSpeed || 1) : (mods.ironSpeed || 1);
   const p = 0.25 + 0.75 * power;
   const speed = club.speed * p * speedMul;
-  const loft = club.loft + (lie === SURF.ROUGH ? 2 : 0) + (1 - power) * 2;
-  const back = club.spin * (0.6 + 0.4 * power) * spinMul;
-  const side = accuracy * (600 + club.speed * 22) * spinMul;
-  const dirErr = accuracy * 3; // degrees of push/pull
+  // spin.y: +1 = full backspin (higher, stops), -1 = topspin (lower, runs); spin.x: -1 draw .. +1 fade
+  const loft = club.loft + (lie === SURF.ROUGH ? 2 : 0) + (1 - power) * 2 + spin.y * spinPower * 2.5;
+  const back = Math.max(club.spin * 0.25, club.spin * (0.6 + 0.4 * power) * spinMul * (1 + spin.y * spinPower * 0.65));
+  const side = accuracy * (600 + club.speed * 22) * spinMul * (mods.sideMul == null ? 1 : mods.sideMul) + spin.x * spinPower * (900 + club.speed * 10) * spinMul;
+  const dirErr = accuracy * 3 * (mods.sideMul == null ? 1 : mods.sideMul) - spin.x * spinPower * 1.2; // shape starts a touch inside the line
   return { speed, loft, back, side, dirErr };
 }
 

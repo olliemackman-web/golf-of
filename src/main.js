@@ -10,6 +10,8 @@ import { buildVegetation, setWindTime } from './vegetation.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
 import { GameAudio } from './audio.js';
+import { ProfileStore, coinsFor, UPGRADES } from './profile.js';
+import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -100,8 +102,11 @@ class Game {
 
     this.hud = new Hud(this.course);
     this.audio = new GameAudio();
-    this.aimView = 'behind'; this.planPower = 1;
+    this.aimView = 'behind'; this.planPower = 1; this.spinSel = { x: 0, y: 0 };
+    this.store = new ProfileStore(); this.menus = new Menus(this); this.profile = null;
     this.hud.bindControls({
+      shop: () => this.openShop(),
+      spin: () => this.openSpin(),
       swing: () => { this.audio.ensure(); this.action(); },
       view: () => this.cycleView(),
       cam: () => this.toggleCam(),
@@ -146,6 +151,26 @@ class Game {
   }
 
   get L() { return this.course.layout; }
+
+  /** Everything the profile's upgrades and the chosen spin change about a shot. */
+  mods() {
+    const u = (this.profile && this.profile.upgrades) || {};
+    const f = u.forgive || 0, pt = u.putting || 0;
+    return {
+      woodSpeed: 1 + 0.03 * (u.power || 0), ironSpeed: 1 + 0.03 * (u.irons || 0),
+      sideMul: 1 - 0.1 * f, accWindow: ACC_WINDOW * (1 + 0.2 * f),
+      captureBonus: 0.15 * pt, puttErr: 1 - 0.1 * pt,
+      spinPower: 0.4 + 0.12 * (u.spin || 0), spin: this.spinSel,
+    };
+  }
+  openShop() {
+    if (!this.profile || (this.state !== 'aim' && this.state !== 'holed')) return;
+    this.menus.shop(this.store, this.profile, () => { this.hud.setCoins(this.profile.coins); if (this.state === 'aim') { this.solvePlan(); this.previewDirty = true; this.updateLieHud(); } });
+  }
+  openSpin() {
+    if (this.state !== 'aim' || this.club.putter) return;
+    this.menus.spinPad(this.spinSel, () => { this.previewDirty = true; this.hud.setSpinLabel(shortSpin(this.spinSel)); });
+  }
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -158,6 +183,7 @@ class Game {
     this.ball.place(this.L.tee.x, this.L.tee.z);
     this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
     this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
+    this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN');
     this.hud.setCamTag('');
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     const wa = this.rnd() * Math.PI * 2, ws = 0.8 + this.rnd() * 4.5;
@@ -171,13 +197,15 @@ class Game {
 
   showTitle() {
     this.state = 'title';
-    this.panel.innerHTML = `<h1>${COURSE_NAME.toUpperCase()}</h1><div class="sub">18 HOLES · PAR 72 · FIRST PERSON</div>
-      <p>${this.holeBlurb(this.L)}</p>
-      <div class="keys"><b>MOUSE DRAG / ← →</b><span>aim</span><b>Q / E · wheel</b><span>change club</span><b>SPACE</b><span>swing — press to start, again for power, again at the line for accuracy</span><b>C</b><span>toggle ball camera</span><b>R</b><span>restart hole</span></div>
-      <button class="btn" id="startBtn">TEE OFF</button>`;
     this.overlay.classList.remove('hidden');
     this.hud.setSwingLabel(''); this.hud.setAimControls(false);
-    document.getElementById('startBtn').onclick = () => this.startPlay();
+    this.menus.profilePicker(this.panel, this.store, (p) => {
+      this.profile = this.store.select(p.name);
+      this.hud.setCoins(this.profile.coins);
+      this.hud.message(`Welcome, ${this.profile.name}`, 2500, 'good');
+      if (this.holeIndex === 0 && this.scores.length === 0) this.startPlay();
+      else { this.audio.ensure(); this.scores = []; this.goToHole(0); }
+    });
   }
 
   holeBlurb(L) {
@@ -290,7 +318,7 @@ class Game {
     const from = { x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z };
     const want = this.distToPin() + (this.club.putter ? 0.4 : 0);
     const endDist = (pw) => {
-      const r = simulateShot(this.course, from, { x: dir.x, z: dir.z }, shotParams(this.club, pw, 0, lie), { wind: this.windBase, trees: this.trees, maxT: 30 });
+      const r = simulateShot(this.course, from, { x: dir.x, z: dir.z }, shotParams(this.club, pw, 0, lie, this.mods()), { wind: this.windBase, trees: this.trees, maxT: 30 });
       return Math.hypot(r.end.x - from.x, r.end.z - from.z);
     };
     if (endDist(1) <= want) { this.planPower = 1; return; }
@@ -299,7 +327,11 @@ class Game {
     for (let i = 0; i < 7; i++) { const mid = (lo + hi) / 2; if (endDist(mid) < want) lo = mid; else hi = mid; }
     this.planPower = Math.round(((lo + hi) / 2) * 100) / 100;
   }
-  carryEstimate(c) { return { DR: 210, '3W': 197, '4H': 180, '5I': 170, '7I': 152, '9I': 128, PW: 112, SW: 81, PT: 0 }[c.id]; }
+  carryEstimate(c) {
+    const base = { DR: 210, '3W': 197, '4H': 180, '5I': 170, '7I': 152, '9I': 128, PW: 112, SW: 81, PT: 0 }[c.id];
+    const m = this.mods(); const k = c.putter ? 1 : c.wood ? m.woodSpeed : m.ironSpeed;
+    return base * Math.pow(k, 1.5);
+  }
   get club() { return CLUBS[this.clubIndex]; }
   changeClub(delta) {
     if (this.state !== 'aim') return;
@@ -347,7 +379,7 @@ class Game {
   updatePreview() {
     const dir = this.aimDir();
     const lie = this.lieId();
-    const params = shotParams(this.club, this.planPower, 0, lie);
+    const params = shotParams(this.club, this.planPower, 0, lie, this.mods());
     const from = { x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z };
     const res = simulateShot(this.course, from, { x: dir.x, z: dir.z }, params, { wind: this.windBase, trees: this.trees, hole: this.L.pin, maxT: 30 });
     const pts = res.path; const g = this.previewLine.geometry; const arr = g.attributes.position.array;
@@ -374,9 +406,12 @@ class Game {
     let wheelAcc = 0;
     this.canvas.addEventListener('wheel', (e) => { wheelAcc += e.deltaY; if (Math.abs(wheelAcc) >= 60) { this.changeClub(wheelAcc > 0 ? 1 : -1); wheelAcc = 0; } }, { passive: true });
     window.addEventListener('keydown', (e) => {
+      if (this.menus && this.menus.open) { if (e.code === 'Escape') this.menus.close(); return; }
       if (e.repeat) { this.keys[e.code] = true; return; }
       this.keys[e.code] = true;
       switch (e.code) {
+        case 'KeyB': this.openSpin(); break;
+        case 'KeyU': this.openShop(); break;
         case 'Space': case 'Enter': e.preventDefault(); this.action(); break;
         case 'KeyQ': case 'ArrowUp': this.changeClub(-1); break;
         case 'KeyE': case 'ArrowDown': this.changeClub(1); break;
@@ -394,6 +429,7 @@ class Game {
   }
 
   action() {
+    if (this.menus && this.menus.open) return;
     switch (this.state) {
       case 'title': this.startPlay(); break;
       case 'flyover': this.enterAim(); break;
@@ -443,7 +479,7 @@ class Game {
   accuracyValue() {
     const s = this.swing;
     if (s.acc == null) return null;
-    return clamp(s.acc / ACC_WINDOW, -1, 1) * (this.club.putter ? 0.6 : 1);
+    return clamp(s.acc / this.mods().accWindow, -1, 1) * (this.club.putter ? 0.6 : 1);
   }
 
   impact() {
@@ -452,7 +488,8 @@ class Game {
     s.launched = true; s.impactT = s.t;
     const acc = this.accuracyValue();
     const lie = this.lieId();
-    const params = shotParams(this.club, s.power, acc == null ? 0 : acc, lie);
+    const params = shotParams(this.club, s.power, acc == null ? 0 : acc, lie, this.mods());
+    this.ball.captureBonus = this.mods().captureBonus;
     // tiny natural dispersion
     const jitter = (this.rnd() - 0.5) * (this.club.putter ? 0.4 : 1.2);
     const yaw = this.aimYaw - (params.dirErr + jitter) * Math.PI / 180; // + = right of the line
@@ -460,6 +497,7 @@ class Game {
     const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
+    this.shotSpin = { x: this.spinSel.x, y: this.spinSel.y }; // keep for the late-accuracy recompute
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
     this.previewLine.visible = false; this.landRing.visible = false;
@@ -475,7 +513,7 @@ class Game {
     if (acc == null) return;
     s.pendingAcc = false;
     if (this.club.putter) return;
-    const params = shotParams(this.club, s.power, acc, this.shotLie);
+    const params = shotParams(this.club, s.power, acc, this.shotLie, this.mods());
     this.ball.spin.y = -params.side * 2 * Math.PI / 60;
   }
 
@@ -691,6 +729,8 @@ class Game {
       const name = total === 1 ? 'HOLE IN ONE!' : diff <= -2 ? 'EAGLE!' : diff === -1 ? 'BIRDIE!' : diff === 0 ? 'PAR' : diff === 1 ? 'BOGEY' : diff === 2 ? 'DOUBLE BOGEY' : `+${diff}`;
       this.hud.message(name, 0, 'good'); this.finalName = name; this.finalTotal = total; this.hud.setSwingLabel('');
       this.scores[this.holeIndex] = { strokes: total, par: this.L.par, penalties: this.penalties };
+      this.holeCoins = coinsFor(total, this.L.par);
+      if (this.profile) { this.store.addCoins(this.profile, this.holeCoins); this.hud.setCoins(this.profile.coins); }
       return;
     }
     this.state = 'settle'; this.settleT = 0;
@@ -719,6 +759,7 @@ class Game {
     this.strokes += 1;
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.syncBallMesh();
+    this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN');
     this.aimYaw = this.defaultAimYaw(); this.autoClub(); this.solvePlan();
     const to = this.aimPose();
     this.walk = { t: 0, from: this.camera.position.clone(), fromLook: this.lookDir.clone(), to: to.pos, toLook: to.look.clone().sub(to.pos).normalize(), fovFrom: this.camera.fov };
@@ -747,9 +788,15 @@ class Game {
       const toParTxt = toPar === 0 ? 'E' : toPar > 0 ? `+${toPar}` : `${toPar}`;
       const last = this.holeIndex >= HOLE_COUNT - 1;
       const card = `<div class="scorecard">${Array.from({ length: HOLE_COUNT }, (_, i) => this.scores[i]).map((sc, i) => `<span class="${sc ? (sc.strokes < sc.par ? 'under' : sc.strokes > sc.par ? 'over' : '') : 'todo'}"><small>${i + 1}</small>${sc ? sc.strokes : '·'}</span>`).join('')}</div>`;
-      this.panel.innerHTML = `<div class="sub">HOLE ${this.L.number} · PAR ${this.L.par}</div><div class="score">${this.finalName}</div><p>${this.finalTotal} stroke${this.finalTotal === 1 ? '' : 's'}${this.penalties ? ` · ${this.penalties} penalt${this.penalties === 1 ? 'y' : 'ies'}` : ''} &nbsp;·&nbsp; round <b>${toParTxt}</b> through ${played.length}</p>${card}${last ? `<p><b>Round complete: ${played.reduce((a, s) => a + s.strokes, 0)} (${toParTxt})</b></p><button class="btn" id="nextBtn">PLAY AGAIN</button>` : `<button class="btn" id="nextBtn">NEXT HOLE →</button>`}`;
+      const roundTotal = played.reduce((a, s) => a + s.strokes, 0);
+      let bestTxt = '';
+      if (last && this.profile) { const prev = this.profile.bestRound; this.store.finishRound(this.profile, roundTotal, toPar); bestTxt = prev == null || roundTotal < prev ? ' · <b class="coin">new best!</b>' : ` · best ${this.profile.bestRound}`; }
+      const coinsTxt = this.profile ? `<p><b class="coin">+${this.holeCoins} coins</b> · balance ◎ ${this.profile.coins}</p>` : '';
+      this.panel.innerHTML = `<div class="sub">HOLE ${this.L.number} · PAR ${this.L.par}</div><div class="score">${this.finalName}</div><p>${this.finalTotal} stroke${this.finalTotal === 1 ? '' : 's'}${this.penalties ? ` · ${this.penalties} penalt${this.penalties === 1 ? 'y' : 'ies'}` : ''} &nbsp;·&nbsp; round <b>${toParTxt}</b> through ${played.length}</p>${coinsTxt}${card}${last ? `<p><b>Round complete: ${roundTotal} (${toParTxt})</b>${bestTxt}</p>` : ''}<div class="mfoot" style="justify-content:center;gap:10px"><button class="btn small" id="shopBtn">PRO SHOP</button>${last ? `<button class="btn small" id="profBtn">PLAYERS</button>` : ''}<button class="btn" id="nextBtn">${last ? 'PLAY AGAIN' : 'NEXT HOLE →'}</button></div>`;
       this.overlay.classList.remove('hidden');
       document.getElementById('nextBtn').onclick = () => { if (last) { this.scores = []; this.goToHole(0); } else this.goToHole(this.holeIndex + 1); };
+      document.getElementById('shopBtn').onclick = () => this.openShop();
+      const pb = document.getElementById('profBtn'); if (pb) pb.onclick = () => { this.scores = []; this.showTitle(); };
     }
   }
 

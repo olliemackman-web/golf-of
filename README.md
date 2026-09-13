@@ -14,12 +14,18 @@ python3 -m http.server 8765 -d /Users/oliver/golf-pov
 Then open http://localhost:8765 (or `http://<this-mac's-LAN-IP>:8765` on a
 phone on the same Wi-Fi). No build step; three.js is vendored under `vendor/`.
 
+## Progression
+
+Pick or create a player on the start screen (profiles live in the browser's localStorage on that device). Each hole pays coins by result — ace 50, eagle 25, birdie 10, par 5, bogey 3, double 2, worse 1 — spent in the PRO SHOP (aim view or the hole-out card) on five upgrade tracks: driver & woods, irons & wedges, forgiveness, putting, spin control (five levels each, 10/20/35/55/80 coins). Upgrades and best round carry across games. The SPIN button (B) opens a pad for draw/fade and back/top spin, shown live on the aim line; it resets after each shot.
+
 ## Controls
 
 | Action | Desktop | Touch |
 | --- | --- | --- |
 | Aim | mouse drag / ← → | drag |
 | Aim view (behind → overhead → landing) | V | VIEW |
+| Ball spin pad | B | SPIN |
+| Pro shop | U | SHOP |
 | Target power (moves the landing ring, marks the meter) | W / S | slider |
 | Club | Q / E / wheel | ◀ ▶ |
 | Swing: start, stop the power bar, then stop the accuracy bar as it reaches 100% | Space ×3 | SWING ×3 |
@@ -33,4 +39,5 @@ phone on the same Wi-Fi). No build step; three.js is vendored under `vendor/`.
 - `src/terrain.js` — terrain splat shader (rough / fairway stripes / green / sand / water), water, far hills, sky, clouds, cup + flag.
 - `src/vegetation.js` — instanced trees (trunks + leaf cards), grass tufts, reeds, tree collisions.
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
+- `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.
 - `src/main.js` — game states, cameras, input, HUD wiring. `window.__game.step(sec)` advances the sim by hand for debugging; `__game.paused = true` stops the loop.

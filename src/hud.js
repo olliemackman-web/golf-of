@@ -9,7 +9,7 @@ export class Hud {
     this.course = course; this.layout = course.layout;
     this.root = document.getElementById('hud');
     this.root.innerHTML = `
-      <div class="card hole"><div class="hname" id="hname">${COURSE_NAME.toUpperCase()} · HOLE 1</div><div class="hrow"><span id="hpar">PAR 4</span><span id="hyds">— YDS</span></div><div class="hrow strokes"><span>STROKE <b id="stroke">1</b></span><span>TO PIN <b id="topin">—</b></span></div><div class="lie" id="lie"></div></div>
+      <div class="card hole"><div class="hname" id="hname">${COURSE_NAME.toUpperCase()} · HOLE 1</div><div class="hrow"><span id="hpar">PAR 4</span><span id="hyds">— YDS</span></div><div class="hrow strokes"><span>STROKE <b id="stroke">1</b></span><span>TO PIN <b id="topin">—</b></span></div><div class="lie" id="lie"><span id="lietxt"></span><span class="coins" id="coins">◎ 0</span></div></div>
       <div class="card wind"><div class="wlabel">WIND</div><div class="wdial"><div class="warrow" id="warrow">➤</div></div><div class="wspeed" id="wspeed">0 mph</div></div>
       <canvas id="minimap" width="170" height="230"></canvas>
       <div class="meter" id="meter"><div class="mlabel" id="mlabel">POWER</div><div class="mbar"><div class="mzone"></div><div class="mfill" id="mfill"></div><div class="mmark" id="mmark"></div><div class="mset" id="mset"></div></div><div class="mpct" id="mpct"></div></div>
@@ -20,6 +20,8 @@ export class Hud {
       <div class="abar" id="abar"><div class="alabel">ACCURACY <b id="apct">0%</b></div><div class="atrack"><div class="azone"></div><div class="afill" id="afill"></div><div class="amark" id="amark"></div></div></div>
       <div class="target" id="target"><div class="tlabel">TARGET <b id="tval">100%</b> <span id="tcarry"></span></div><input type="range" id="tpow" min="8" max="100" value="100"></div>
       <div class="controls" id="controls">
+        <button class="cbtn" id="btnShop" title="Pro shop (U)">SHOP</button>
+        <button class="cbtn" id="btnSpin" title="Ball spin (B)">SPIN</button>
         <button class="cbtn" id="btnView" title="Aim view (V)">VIEW</button>
         <button class="cbtn" id="btnCam" title="Ball camera (C)">CAM</button>
         <button class="cbtn" id="btnPrev" title="Previous club (Q)">◀</button>
@@ -27,7 +29,7 @@ export class Hud {
         <button class="cbtn big" id="btnSwing">SWING</button>
       </div>`;
     this.el = {};
-    for (const id of ['abar', 'apct', 'afill', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
+    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'afill', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
@@ -86,17 +88,19 @@ export class Hud {
   /** Wire the on-screen controls. handlers: {swing, view, cam, prev, next, target(pct)} */
   bindControls(h) {
     const tap = (el, fn) => { el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); }); el.addEventListener('click', (e) => { e.preventDefault(); fn(); }); };
-    tap(this.el.btnSwing, h.swing); tap(this.el.btnView, h.view); tap(this.el.btnCam, h.cam); tap(this.el.btnPrev, h.prev); tap(this.el.btnNext, h.next);
+    tap(this.el.btnSwing, h.swing); tap(this.el.btnView, h.view); tap(this.el.btnShop, h.shop); tap(this.el.btnSpin, h.spin); tap(this.el.btnCam, h.cam); tap(this.el.btnPrev, h.prev); tap(this.el.btnNext, h.next);
     this.el.tpow.addEventListener('input', () => h.target(parseInt(this.el.tpow.value, 10) / 100));
     this.el.tpow.addEventListener('pointerdown', (e) => e.stopPropagation());
   }
   setSwingLabel(text) { this.el.btnSwing.textContent = text; this.el.btnSwing.style.visibility = text ? 'visible' : 'hidden'; }
-  setAimControls(show) { this.el.btnView.style.display = show ? '' : 'none'; this.el.btnPrev.style.display = show ? '' : 'none'; this.el.btnNext.style.display = show ? '' : 'none'; this.el.target.style.display = show ? '' : 'none'; }
+  setCoins(n) { this.el.coins.textContent = `◎ ${n}`; }
+  setSpinLabel(t) { this.el.btnSpin.textContent = t; this.el.btnSpin.classList.toggle('active', t !== 'SPIN'); }
+  setAimControls(show) { this.el.btnShop.style.display = show ? '' : 'none'; this.el.btnSpin.style.display = show ? '' : 'none'; this.el.btnView.style.display = show ? '' : 'none'; this.el.btnPrev.style.display = show ? '' : 'none'; this.el.btnNext.style.display = show ? '' : 'none'; this.el.target.style.display = show ? '' : 'none'; }
   setTarget(pct, carryM, putter) { this.el.tval.textContent = `${Math.round(pct * 100)}%`; this.el.tcarry.textContent = putter ? `· ${(carryM * 3.28084).toFixed(0)} ft` : `· ${yards(carryM)} yds`; if (parseInt(this.el.tpow.value, 10) !== Math.round(pct * 100)) this.el.tpow.value = Math.round(pct * 100); }
   setHoleYards(m) { this.el.hyds.textContent = `${yards(m)} YDS`; }
   setStroke(n) { this.el.stroke.textContent = n; }
   setToPin(m) { this.el.topin.textContent = m < 30 ? `${(m * 3.28084).toFixed(0)} ft` : `${yards(m)} yds`; }
-  setLie(text) { this.el.lie.textContent = text; }
+  setLie(text) { this.el.lietxt.textContent = text; }
   setWind(speedMs, relAngle) { this.el.wspeed.textContent = `${(speedMs * 2.237).toFixed(0)} mph`; this.el.warrow.style.transform = `rotate(${relAngle}rad)`; this.el.warrow.style.opacity = speedMs < 0.3 ? 0.3 : 1; }
   setClub(club, carryM) { this.el.cname.textContent = club.name; this.el.cdist.textContent = club.putter ? 'on the green' : `~${yards(carryM)} yds`; }
   setHint(html) { this.el.hint.innerHTML = html; }
