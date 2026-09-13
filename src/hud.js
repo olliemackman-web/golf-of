@@ -17,7 +17,7 @@ export class Hud {
       <div class="msg" id="msg"></div>
       <div class="hint" id="hint"></div>
       <div class="camtag" id="camtag"></div>
-      <div class="abar" id="abar"><div class="alabel">ACCURACY <b id="apct">0%</b></div><div class="atrack"><div class="azone"></div><div class="afill" id="afill"></div><div class="amark" id="amark"></div></div></div>
+      <div class="abar" id="abar"><div class="atri" id="atri"></div><div class="atrack"><div class="aticks"></div><div class="azone"></div><div class="amark" id="amark"></div></div><div class="alabel">ACCURACY <b id="apct">0%</b></div></div>
       <div class="target" id="target"><div class="tlabel">TARGET <b id="tval">100%</b> <span id="tcarry"></span></div><input type="range" id="tpow" min="8" max="100" value="100"></div>
       <div class="controls" id="controls">
         <button class="cbtn" id="btnShop" title="Pro shop (U)">SHOP</button>
@@ -29,7 +29,7 @@ export class Hud {
         <button class="cbtn big" id="btnSwing">SWING</button>
       </div>`;
     this.el = {};
-    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'afill', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
+    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
@@ -111,12 +111,12 @@ export class Hud {
   }
   showMeter(show) { this.el.meter.style.opacity = show ? 1 : 0; }
   showAccuracy(show) { this.el.abar.style.opacity = show ? 1 : 0; }
-  /** sweep 0..1 runs left→right; hit = where it was stopped (null while still running); good = within the zone. */
-  accuracy({ sweep, hit, good }) {
-    const v = hit == null ? sweep : hit;
-    this.el.afill.style.width = `${(v * 100).toFixed(1)}%`;
-    this.el.amark.style.left = `${(v * 100).toFixed(1)}%`;
-    this.el.apct.textContent = `${Math.round(v * 100)}%`;
+  /** pos 0..1 across the bar (0.5 = centre); hit = where it was stopped (null while moving); good = in the green. */
+  accuracy({ pos, hit, good }) {
+    const v = hit == null ? pos : hit;
+    const pct = `${(v * 100).toFixed(1)}%`;
+    this.el.amark.style.left = pct; this.el.atri.style.left = pct;
+    this.el.apct.textContent = `${Math.round(100 - Math.abs(v - 0.5) * 200)}%`;
     this.el.abar.className = 'abar' + (hit == null ? '' : good ? ' good' : ' bad');
   }
   /** power 0..1 fill, marker 0..1 position (null hides), set = chosen power line. */

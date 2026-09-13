@@ -15,7 +15,7 @@ import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.62, T_DOWN_PUTT = 0.5, ACC_WINDOW = 0.13;
+const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.6, T_ACC_PUTT = 0.75;
 
 class Game {
   constructor() {
@@ -83,6 +83,22 @@ class Game {
     // preview
     this.previewLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new Array(900).fill(0).map(() => new THREE.Vector3())), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthTest: false }));
     this.previewLine.renderOrder = 20; this.previewLine.frustumCulled = false; scene.add(this.previewLine);
+    // Putting: a dashed glowing ribbon laid on the green, green when the putt drops.
+    const rgeo = new THREE.BufferGeometry();
+    rgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(900 * 2 * 3), 3));
+    rgeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(900 * 2 * 2), 2));
+    const ridx = []; for (let i = 0; i < 899; i++) { const a = i * 2; ridx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    rgeo.setIndex(ridx);
+    this.ribbonMat = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(0xffffff) }, uTime: { value: 0 } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `uniform vec3 uColor; uniform float uTime; varying vec2 vUv;
+        void main(){ float d = fract(vUv.x / 0.55 - uTime * 0.6); float dash = smoothstep(0.02, 0.1, d) * (1.0 - smoothstep(0.55, 0.63, d));
+        float edge = 1.0 - smoothstep(0.55, 1.0, abs(vUv.y - 0.5) * 2.0);
+        float a = dash * edge; if (a < 0.02) discard; gl_FragColor = vec4(uColor * (1.0 + 0.6 * edge), a * 0.95); }`,
+      transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+    });
+    this.puttRibbon = new THREE.Mesh(rgeo, this.ribbonMat); this.puttRibbon.renderOrder = 21; this.puttRibbon.frustumCulled = false; this.puttRibbon.visible = false; scene.add(this.puttRibbon);
     this.landRing = new THREE.Mesh(new THREE.RingGeometry(0.75, 1.0, 40), new THREE.MeshBasicMaterial({ color: 0xc9ff5b, transparent: true, opacity: 0.85, depthTest: false, side: THREE.DoubleSide }));
     this.landRing.rotation.x = -Math.PI / 2; this.landRing.renderOrder = 21; scene.add(this.landRing);
 
@@ -160,7 +176,7 @@ class Game {
     const f = u.forgive || 0, pt = u.putting || 0;
     return {
       woodSpeed: 1 + 0.10 * (u.power || 0), ironSpeed: 1 + 0.10 * (u.irons || 0),
-      sideMul: 1 - 0.1 * f, accWindow: ACC_WINDOW * (1 + 0.2 * f),
+      sideMul: 1 - 0.1 * f, accScale: 1 / (1 + 0.2 * f),
       captureBonus: 0.15 * pt, puttErr: 1 - 0.1 * pt,
       spinPower: 0.4 + 0.12 * (u.spin || 0), spin: this.spinSel,
     };
@@ -245,13 +261,34 @@ class Game {
   enterAim() {
     this.state = 'aim';
     this.golfer.group.visible = false;
-    this.camera.fov = 62; this.camera.updateProjectionMatrix();
+    this.camera.fov = this.club.putter ? 70 : 62; this.camera.updateProjectionMatrix();
+    if (this.club.putter) this.placePutterRig();
     this.hud.showMeter(false); this.hud.showAccuracy(false);
     this.hud.setCamTag('');
     this.updateLieHud();
     this.previewDirty = true;
-    this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>V</b> view &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
-    this.hud.setSwingLabel('ADDRESS'); this.hud.setAimControls(true);
+    if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line — release to putt');
+    else this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>V</b> view &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
+    this.hud.setSwingLabel(this.club.putter ? 'PUTT' : 'ADDRESS'); this.hud.setAimControls(true);
+  }
+
+  /** Putting aim shows the arms and putter behind the ball, following the line as it is aimed. */
+  placePutterRig() {
+    const bp = new THREE.Vector3(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z);
+    this.golfer.setup(bp, this.aimDir(), this.club);
+    this.golfer.setBodyVisible(false);
+    this.golfer.group.visible = true;
+  }
+
+  /** Release of the putting drag: go straight to the accuracy bar with the pulled-back pace. */
+  commitPutt() {
+    if (this.state !== 'aim' || !this.club.putter) return;
+    this.placePutterRig();
+    this.previewLine.visible = false; this.landRing.visible = false;
+    this.hud.setAimControls(false); this.hud.setCamTag('');
+    const to = this.addressCamPose({ pos: new THREE.Vector3(), look: new THREE.Vector3() });
+    this.camera.position.copy(to.pos); this.lookDir.subVectors(to.look, to.pos).normalize(); this.setLook();
+    this.armSwing(true);
   }
 
   cycleView() {
@@ -264,6 +301,7 @@ class Game {
   toggleCam() { this.camMode = this.camMode === 'pov' ? 'chase' : 'pov'; this.hud.message(this.camMode === 'pov' ? 'First-person camera' : 'Ball camera', 1200); }
 
   enterAddress() {
+    if (this.club.putter) { this.commitPutt(); return; }
     const dir = this.aimDir();
     const bp = new THREE.Vector3(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z);
     this.golfer.setup(bp, dir, this.club);
@@ -275,9 +313,10 @@ class Game {
     this.hud.setSwingLabel(''); this.hud.setAimControls(false); this.hud.setCamTag('');
   }
 
-  armSwing() {
+  armSwing(quick = false) {
     this.state = 'address';
-    this.swing = { phase: 'ready', t: 0, power: 0, acc: null, accT: null, launched: false, impactT: 0 };
+    this.swing = { phase: 'ready', t: 0, power: 0, acc: null, launched: false, impactT: 0, quick };
+    if (quick) { this.hud.showMeter(true); this.swingPress(); return; }
     this.hud.showMeter(true);
     this.hud.meter({ label: 'POWER', fill: 0, marker: null, set: this.planPower < 1 ? this.planPower : null });
     this.hud.setHint('<b>SPACE</b> start swing &nbsp;·&nbsp; <b>ESC</b> back');
@@ -352,9 +391,18 @@ class Game {
     const g = 1 + 0.22 * Math.sin(t * 0.31) + 0.12 * Math.sin(t * 0.93 + 1) + 0.06 * Math.sin(t * 2.1);
     return { x: this.windBase.x * g, z: this.windBase.z * g, speed: this.windBase.speed * g };
   }
+  /** Low camera behind the ball looking down the putt line (used for putting aim and address). */
+  puttPose(ballV, dir) {
+    const right = new THREE.Vector3().crossVectors(dir, UP);
+    const pos = ballV.clone().addScaledVector(dir, -1.7).addScaledVector(right, 0.15);
+    pos.y = Math.max(ballV.y + 1.2, this.course.heightAt(pos.x, pos.z) + 1.0);
+    const look = ballV.clone().addScaledVector(dir, 4.5); look.y = this.course.heightAt(look.x, look.z) + 0.05;
+    return { pos, look };
+  }
   aimPose() {
     const dir = this.aimDir();
     const b = this.ball.pos;
+    if (this.club.putter) return this.puttPose(new THREE.Vector3(b.x, b.y, b.z), dir);
     const right = new THREE.Vector3().crossVectors(dir, UP);
     if (this.aimView === 'high') {
       const pos = new THREE.Vector3(b.x, 0, b.z).addScaledVector(dir, -14).addScaledVector(right, 2);
@@ -388,22 +436,65 @@ class Game {
     const n = Math.min(pts.length, 900);
     for (let i = 0; i < n; i++) { arr[i * 3] = pts[i].x; arr[i * 3 + 1] = Math.max(pts[i].y, this.course.heightAt(pts[i].x, pts[i].z)) + 0.06; arr[i * 3 + 2] = pts[i].z; }
     g.setDrawRange(0, n); g.attributes.position.needsUpdate = true;
-    this.previewLine.visible = true;
-    const e = res.end; this.landRing.position.set(e.x, this.course.heightAt(e.x, e.z) + 0.05, e.z); this.landRing.visible = true;
+    const e = res.end; this.landRing.position.set(e.x, this.course.heightAt(e.x, e.z) + 0.05, e.z);
     const scale = this.club.putter ? 0.25 : 1; this.landRing.scale.set(scale, scale, 1);
+    if (this.club.putter) {
+      this.previewLine.visible = false;
+      this.buildRibbon(pts);
+      const holed = res.mode === 'holed';
+      this.ribbonMat.uniforms.uColor.value.set(holed ? 0x7dff4a : 0xffffff);
+      this.puttRibbon.visible = true; this.landRing.visible = !holed;
+      this.puttHoled = holed;
+    } else { this.previewLine.visible = true; this.puttRibbon.visible = false; this.landRing.visible = true; }
     this.previewPath = pts; this.previewEnd = e;
     const carry = Math.hypot(e.x - from.x, e.z - from.z);
     this.hud.setTarget(this.planPower, carry, this.club.putter);
     this.previewDirty = false;
   }
 
+  /** Lay a flat ribbon along the path points, 9cm wide, hugging the ground. */
+  buildRibbon(pts) {
+    const g = this.puttRibbon.geometry, P = g.attributes.position.array, U = g.attributes.uv.array;
+    const n = Math.min(pts.length, 900); let dist = 0;
+    for (let i = 0; i < n; i++) {
+      const p = pts[i], q = pts[Math.min(n - 1, i + 1)], o = pts[Math.max(0, i - 1)];
+      let dx = q.x - o.x, dz = q.z - o.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+      if (i > 0) dist += Math.hypot(p.x - pts[i - 1].x, p.z - pts[i - 1].z);
+      const rx = -dz * 0.045, rz = dx * 0.045;
+      const y = this.course.heightAt(p.x, p.z) + 0.02;
+      P[(i * 2) * 3] = p.x + rx; P[(i * 2) * 3 + 1] = y; P[(i * 2) * 3 + 2] = p.z + rz;
+      P[(i * 2 + 1) * 3] = p.x - rx; P[(i * 2 + 1) * 3 + 1] = y; P[(i * 2 + 1) * 3 + 2] = p.z - rz;
+      U[(i * 2) * 2] = dist; U[(i * 2) * 2 + 1] = 0; U[(i * 2 + 1) * 2] = dist; U[(i * 2 + 1) * 2 + 1] = 1;
+    }
+    g.setDrawRange(0, Math.max(0, (n - 1) * 6)); g.attributes.position.needsUpdate = true; g.attributes.uv.needsUpdate = true;
+  }
+
   // ---------- input ----------
   setupInput() {
-    let dragging = false, lx = 0;
-    this.canvas.addEventListener('pointerdown', (e) => { if (this.state === 'title') return; dragging = true; lx = e.clientX; this.canvas.setPointerCapture(e.pointerId); });
-    this.canvas.addEventListener('pointermove', (e) => { if (!dragging) return; const dx = e.clientX - lx; lx = e.clientX; if (this.state === 'aim') { this.aimYaw -= dx * 0.0032; this.previewDirty = true; } });
-    this.canvas.addEventListener('pointerup', () => { dragging = false; });
-    this.canvas.addEventListener('pointercancel', () => { dragging = false; });
+    let dragging = false, lx = 0, drag = null;
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (this.state === 'title' || (this.menus && this.menus.open)) return;
+      dragging = true; lx = e.clientX; try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
+      drag = { sx: e.clientX, sy: e.clientY, yaw: this.aimYaw, power: this.planPower, moved: false, putt: this.state === 'aim' && this.club.putter };
+    });
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (!dragging || this.state !== 'aim') return;
+      const dx = e.clientX - lx; lx = e.clientX;
+      if (drag && drag.putt) {
+        // pull back for pace, slide sideways for the line
+        const pull = e.clientY - drag.sy, side = e.clientX - drag.sx;
+        if (Math.hypot(pull, side) > 8) drag.moved = true;
+        this.planPower = clamp(drag.power + pull / (window.innerHeight * 0.45), 0.08, 1);
+        this.aimYaw = drag.yaw - side * (this.isMobile ? 0.0022 : 0.0016);
+        this.previewDirty = true; this.placePutterRig();
+      } else { this.aimYaw -= dx * 0.0032; this.previewDirty = true; }
+    });
+    const release = () => {
+      const d = drag; dragging = false; drag = null;
+      if (d && d.putt && d.moved && this.state === 'aim' && this.club.putter) { this.updatePreview(); this.commitPutt(); }
+    };
+    this.canvas.addEventListener('pointerup', release);
+    this.canvas.addEventListener('pointercancel', () => { dragging = false; drag = null; });
     window.addEventListener('blur', () => { this.keys = {}; dragging = false; });
     let wheelAcc = 0;
     this.canvas.addEventListener('wheel', (e) => { wheelAcc += e.deltaY; if (Math.abs(wheelAcc) >= 60) { this.changeClub(wheelAcc > 0 ? 1 : -1); wheelAcc = 0; } }, { passive: true });
@@ -439,7 +530,6 @@ class Game {
       case 'toAddress': break;
       case 'address': this.swingPress(); break;
       case 'swing': this.swingPress(); break;
-      case 'flight': if (this.swing && this.swing.pendingAcc) this.swingPress(); break;
       case 'holed': { const b = document.getElementById('nextBtn'); if (this.endShown && b) b.click(); break; }
     }
   }
@@ -457,31 +547,50 @@ class Game {
     if (s.phase === 'ready') {
       s.phase = 'back'; s.t = 0; this.state = 'swing';
       this.golfer.beginBackswing();
+      if (s.quick) { // putting: power was set by the pull-back, go straight to the accuracy bar
+        s.power = this.planPower; this.golfer.setBackswing(s.power);
+        this.hud.meter({ label: 'POWER', fill: s.power, marker: null, set: null, pct: s.power });
+        this.startAccuracy(); return;
+      }
       this.hud.meter({ label: 'POWER', fill: 0, marker: null, set: this.planPower < 1 ? this.planPower : null });
       this.hud.setHint('<b>SPACE</b> set power'); this.hud.setSwingLabel('POWER');
     } else if (s.phase === 'back') {
       s.power = clamp(s.t / this.meterTime(), 0.03, 1);
-      this.startDown();
-    } else if (s.phase === 'down') {
-      if (s.acc == null) { s.acc = s.t - s.tDown; s.accT = s.t; }
+      this.startAccuracy();
+    } else if (s.phase === 'acc') {
+      this.strike();
     }
   }
 
   meterTime() { return this.club.putter ? T_METER_PUTT : T_METER; }
-  startDown() {
+  accTime() { return this.club.putter ? T_ACC_PUTT : T_ACC; }
+
+  /** Club pauses at the top; the accuracy marker ping-pongs until the player strikes. */
+  startAccuracy() {
     const s = this.swing;
-    s.phase = 'down'; s.t = 0; s.tDown = this.club.putter ? T_DOWN_PUTT : T_DOWN;
+    s.phase = 'acc'; s.t = 0; s.pos = 0; s.dir = 1; s.sweeps = 0;
     this.golfer.holdTop();
     this.hud.meter({ label: 'POWER', fill: s.power, marker: null, set: null, pct: s.power });
-    this.hud.showAccuracy(true); this.hud.accuracy({ sweep: 0, hit: null });
-    this.hud.setHint('<b>SPACE</b> as the bar reaches 100%'); this.hud.setSwingLabel('STRIKE');
-    s.holdDelay = 0.09; s.downStarted = false; // a beat at the top, then the downswing (driven from updateSwing, not a timer)
+    this.hud.showAccuracy(true); this.hud.accuracy({ pos: 0, hit: null });
+    this.hud.setHint('<b>SPACE</b> when the marker is in the green'); this.hud.setSwingLabel('STRIKE');
+  }
+
+  strike() {
+    const s = this.swing;
+    if (s.phase !== 'acc') return;
+    s.acc = (s.pos - 0.5) * 2; // -1 left .. +1 right of centre
+    this.hud.accuracy({ pos: s.pos, hit: s.pos, good: Math.abs(s.acc) <= 0.2 });
+    s.phase = 'down'; s.t = 0;
+    this.golfer.beginDownswing(this.club.putter ? T_DOWN_PUTT : T_DOWN, () => this.impact());
+    this.hud.setSwingLabel('');
   }
 
   accuracyValue() {
     const s = this.swing;
-    if (s.acc == null) return null;
-    return clamp(s.acc / this.mods().accWindow, -1, 1) * (this.club.putter ? 0.6 : 1);
+    if (s.acc == null) return 0;
+    // inside the green zone counts as flush; beyond it the miss grows, softened by forgiveness
+    const a = Math.abs(s.acc) <= 0.2 ? 0 : (s.acc - Math.sign(s.acc) * 0.2) / 0.8;
+    return clamp(a * this.mods().accScale, -1, 1) * (this.club.putter ? 0.6 : 1);
   }
 
   impact() {
@@ -490,7 +599,7 @@ class Game {
     s.launched = true; s.impactT = s.t;
     const acc = this.accuracyValue();
     const lie = this.lieId();
-    const params = shotParams(this.club, s.power, acc == null ? 0 : acc, lie, this.mods());
+    const params = shotParams(this.club, s.power, acc, lie, this.mods());
     this.ball.captureBonus = this.mods().captureBonus;
     // tiny natural dispersion
     const jitter = (this.rnd() - 0.5) * (this.club.putter ? 0.4 : 1.2);
@@ -499,24 +608,12 @@ class Game {
     const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
-    this.shotSpin = { x: this.spinSel.x, y: this.spinSel.y }; // keep for the late-accuracy recompute
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
-    this.previewLine.visible = false; this.landRing.visible = false;
-    if (acc != null) this.hud.setSwingLabel(''); // otherwise keep STRIKE up until the late press lands
+    this.previewLine.visible = false; this.landRing.visible = false; this.puttRibbon.visible = false;
+    this.hud.setSwingLabel('');
     this.hud.setHint(this.camMode === 'pov' ? '<b>C</b> ball camera' : '<b>C</b> first-person');
     this.hud.setCamTag('');
-    if (acc == null) s.pendingAcc = true;
-  }
-
-  applyLateAccuracy() {
-    const s = this.swing; if (!s || !s.pendingAcc) return;
-    const acc = this.accuracyValue();
-    if (acc == null) return;
-    s.pendingAcc = false;
-    if (this.club.putter) return;
-    const params = shotParams(this.club, s.power, acc, this.shotLie, this.mods());
-    this.ball.spin.y = -params.side * 2 * Math.PI / 60;
   }
 
   // ---------- per-frame updates ----------
@@ -528,6 +625,7 @@ class Game {
     this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) + Math.PI);
     if (this.water && this.water.material.userData.shader) { const sh = this.water.material.userData.shader; sh.uniforms.tMask.value = this.terrain.maskTex; }
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
+    this.ribbonMat.uniforms.uTime.value = this.time;
     const aimDir = this.aimDir();
     this.hud.setWind(w.speed, Math.atan2(w.x, w.z) - this.aimYaw + Math.PI);
 
@@ -559,7 +657,7 @@ class Game {
 
   updateAim(dt) {
     const rot = (this.keys.ArrowLeft || this.keys.KeyA ? 1 : 0) - (this.keys.ArrowRight || this.keys.KeyD ? 1 : 0);
-    if (rot) { this.aimYaw += rot * dt * 0.55; this.previewDirty = true; }
+    if (rot) { this.aimYaw += rot * dt * 0.55; this.previewDirty = true; if (this.club.putter) this.placePutterRig(); }
     if (this.previewDirty) { this.previewNext = (this.previewNext || 0); if (this.time >= this.previewNext) { this.updatePreview(); this.previewNext = this.time + 0.06; } }
     const p = this.aimPose();
     this.camera.position.lerp(p.pos, 1 - Math.exp(-dt * 10));
@@ -574,13 +672,9 @@ class Game {
     const dir = this.golfer.dir;
     const ho = this.golfer.headOffset({});
     if (this.club && this.club.putter) {
-      // Putting: crouched behind the ball reading the line, putter head in the bottom of the frame.
-      const right = new THREE.Vector3().crossVectors(dir, UP);
-      const pos = ball.clone().addScaledVector(dir, -1.7).addScaledVector(right, 0.15);
-      pos.y = Math.max(ball.y + 1.2, this.course.heightAt(pos.x, pos.z) + 1.0);
-      const look = ball.clone().addScaledVector(dir, 4.5); look.y = this.course.heightAt(look.x, look.z) + 0.05;
-      out.pos.copy(pos); out.look.copy(look);
-      this.puttCam = pos.clone();
+      const pp = this.puttPose(ball.clone(), dir);
+      out.pos.copy(pp.pos); out.look.copy(pp.look);
+      this.puttCam = pp.pos.clone();
       return out;
     }
     eye.y += ho.dip;
@@ -616,16 +710,12 @@ class Game {
       const fill = Math.min(1, s.t / this.meterTime());
       this.golfer.setBackswing(fill);
       this.hud.meter({ label: 'POWER', fill, marker: null, set: this.planPower < 1 ? this.planPower : null, pct: fill });
-      if (s.t >= this.meterTime() + 0.25) { s.power = 1; this.startDown(); }
-    } else if (s.phase === 'down') {
-      if (!s.downStarted && s.t >= s.holdDelay) { s.downStarted = true; this.golfer.beginDownswing(s.tDown, () => this.impact()); }
-      const sweep = clamp((s.t - s.holdDelay) / s.tDown, 0, 1);
-      if (s.acc != null) { const hit = clamp((s.accT - s.holdDelay) / s.tDown, 0, 1.15); this.hud.accuracy({ sweep, hit: Math.min(hit, 1), good: Math.abs(s.accT - (s.holdDelay + s.tDown)) < ACC_WINDOW * 0.35 }); }
-      else this.hud.accuracy({ sweep, hit: null });
-      if (s.acc != null && !s.launched) {
-        // pressed early: keep the animation, remember the error relative to the real impact time
-        s.acc = s.accT - (s.holdDelay + s.tDown);
-      }
+      if (s.t >= this.meterTime() + 0.25) { s.power = 1; this.startAccuracy(); }
+    } else if (s.phase === 'acc') {
+      s.pos += s.dir * dt / this.accTime();
+      if (s.pos >= 1) { s.pos = 1; s.dir = -1; s.sweeps++; } else if (s.pos <= 0) { s.pos = 0; s.dir = 1; s.sweeps++; }
+      this.hud.accuracy({ pos: s.pos, hit: null });
+      if (s.sweeps >= 4) this.strike(); // never pressed: take it where it is
     }
     this.golfer.update(dt);
     this.updateAddressCam(dt);
@@ -633,13 +723,6 @@ class Game {
 
   updateFlight(dt) {
     this.flightT += dt;
-    const s = this.swing;
-    if (s && s.pendingAcc) {
-      s.t += dt;
-      if (s.acc != null) { s.acc = s.accT - (s.holdDelay + s.tDown); this.hud.accuracy({ sweep: 1, hit: 1, good: Math.abs(s.acc) < ACC_WINDOW * 0.35 }); this.applyLateAccuracy(); }
-      else if (s.t - (s.holdDelay + s.tDown) > 0.2) { s.accT = s.t; s.acc = ACC_WINDOW * 0.7; this.applyLateAccuracy(); this.hud.setSwingLabel(''); this.hud.message('Late — pushed it', 1500, 'bad'); }
-      if (!s.pendingAcc) this.hud.setSwingLabel('');
-    }
     const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
     this.ball.step(Math.min(dt, 0.05));
     for (const ev of this.ball.events) {
@@ -806,7 +889,7 @@ class Game {
   async goToHole(n) {
     if (this.loadingHole) return;
     this.loadingHole = true; this.state = 'loading'; this.endShown = false;
-    this.golfer.group.visible = false; this.previewLine.visible = false; this.landRing.visible = false; this.trail.visible = false;
+    this.golfer.group.visible = false; this.previewLine.visible = false; this.landRing.visible = false; this.trail.visible = false; this.puttRibbon.visible = false;
     const L = makeHole(n);
     this.panel.innerHTML = `<div class="sub">WALKING TO THE NEXT TEE</div><h1>HOLE ${L.number}</h1><div class="sub">PAR ${L.par} · ${L.yards} YDS</div><p>${this.holeBlurb(L)}</p><div id="loading">…</div>`;
     this.overlay.classList.remove('hidden');

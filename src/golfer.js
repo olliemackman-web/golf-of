@@ -163,7 +163,7 @@ export class Golfer {
     this.group.updateMatrixWorld(true);
   }
 
-  setBodyVisible(v) { for (const m of this.bodyParts) m.visible = v; }
+  setBodyVisible(v) { for (const m of this.bodyParts) m.visible = v; for (const m of [this.upperL, this.upperR, this.elbowL, this.elbowR]) m.visible = v; }
   eyeWorld(out) { const e = this.stance.eye; return out.set(e[0], e[1], e[2]).applyMatrix4(this.group.matrixWorld); }
   ballWorld(out) { return out.copy(this.ballLocal).applyMatrix4(this.group.matrixWorld); }
   clubHeadWorld(out) { return this.clubMesh.userData.head.getWorldPosition(out); }
