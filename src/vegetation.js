@@ -106,6 +106,7 @@ export function buildVegetation(course, tex, quality = {}) {
     if (L.pond && ellipseDist(x, z, L.pond) < 1.25) return false;
     if (ellipseDist(x, z, L.green) < 2.2) return false;
     if (Math.hypot(x - L.tee.x, z - L.tee.z) < 14) return false;
+    if (Math.hypot(x - L.tee.x, (z - L.tee.z) * 0.6) < 30 && z < L.tee.z) return false; // keep the overhead aim camera behind the tee clear
     for (const b of L.bunkers) if (ellipseDist(x, z, b) < 1.8) return false;
     return true;
   };

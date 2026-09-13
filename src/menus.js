@@ -12,7 +12,9 @@ export class Menus {
   profilePicker(container, store, onPick) {
     const list = store.list();
     const card = (p) => {
-      const best = p.bestRound == null ? 'no round yet' : `best ${p.bestRound} (${p.bestToPar === 0 ? 'E' : p.bestToPar > 0 ? '+' + p.bestToPar : p.bestToPar})`;
+      const bests = Object.entries(p.best || {}).map(([k, b]) => `${k === 'riverbend' ? 'Riverbend' : 'Gosfield'} ${b.strokes} (${fmtPar(b.toPar)})`);
+      if (!bests.length && p.bestRound != null) bests.push(`Riverbend ${p.bestRound} (${fmtPar(p.bestToPar)})`);
+      const best = bests.length ? 'best ' + bests.join(' · ') : 'no round yet';
       const ups = UPGRADES.map((u) => `<span class="pup" title="${esc(u.name)} ${p.upgrades[u.id] || 0}/${u.max}">${esc(u.name.split(' ')[0])} <b>${p.upgrades[u.id] || 0}</b></span>`).join('');
       return `<div class="pcard" data-name="${esc(p.name)}"><div class="pmain"><div class="pname">${esc(p.name)}</div><div class="pmeta">${best} · ${p.rounds} round${p.rounds === 1 ? '' : 's'} · <b class="coin">◎ ${p.coins}</b></div><div class="pups">${ups}</div></div><button class="btn small" data-play="${esc(p.name)}">PLAY</button><button class="pdel" title="Delete profile" data-del="${esc(p.name)}">✕</button></div>`;
     };
@@ -27,6 +29,16 @@ export class Menus {
     for (const b of container.querySelectorAll('[data-play]')) b.onclick = () => onPick(store.get(b.dataset.play));
     for (const b of container.querySelectorAll('[data-del]')) b.onclick = () => { if (confirm(`Delete ${b.dataset.del}? Coins and upgrades will be lost.`)) { store.remove(b.dataset.del); this.profilePicker(container, store, onPick); } };
     if (!list.length) setTimeout(() => input.focus(), 50);
+  }
+
+  /** Course chooser, rendered into the title panel after the player is picked. */
+  coursePicker(container, courses, profile, onPick) {
+    const cards = courses.map((c, i) => {
+      const b = store_best(profile, c.id);
+      return `<div class="pcard"><div class="pmain"><div class="pname">${esc(c.name)}</div><div class="pmeta">18 holes · par ${c.par} · ${c.yards.toLocaleString()} yds${b ? ` · <b class="coin">best ${b.strokes} (${fmtPar(b.toPar)})</b>` : ''}</div><div class="pmeta" style="margin-top:4px">${esc(c.blurb)}</div></div><button class="btn small" data-course="${i}">PLAY</button></div>`;
+    }).join('');
+    container.innerHTML = `<h1>RIVERBEND</h1><div class="sub">${esc(profile.name.toUpperCase())} · PICK A COURSE</div><div class="plist">${cards}</div>`;
+    for (const b of container.querySelectorAll('[data-course]')) b.onclick = () => onPick(parseInt(b.dataset.course, 10));
   }
 
   shop(store, profile, onChange) {
@@ -61,6 +73,9 @@ export class Menus {
     paint();
   }
 }
+
+function store_best(p, courseId) { if (p.best && p.best[courseId]) return p.best[courseId]; if (courseId === 'riverbend' && p.bestRound != null) return { strokes: p.bestRound, toPar: p.bestToPar }; return null; }
+export function fmtPar(t) { return t === 0 ? 'E' : t > 0 ? '+' + t : String(t); }
 
 export function describeSpin(s) {
   const parts = [];

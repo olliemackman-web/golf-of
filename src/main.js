@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { Course, makeHole, HOLE_COUNT, COURSE_NAME, SURF, SURF_NAME, splineDist, splinePoint, splineLength } from './courseData.js';
+import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
 import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers } from './terrain.js';
 import { buildVegetation, setWindTime } from './vegetation.js';
@@ -54,7 +54,7 @@ class Game {
     const { sunDir, envMap } = buildSky(r, scene);
     this.sunDir = sunDir; this.envMap = envMap;
     this.clouds = buildClouds(this.tex); scene.add(this.clouds);
-    this.holeGroup = null; this.scores = []; this.holeIndex = 0;
+    this.holeGroup = null; this.scores = []; this.holeIndex = 0; this.courseIndex = 0;
     await this.buildHoleScene(0, (t) => { document.getElementById('loading').textContent = t; });
 
     // lights
@@ -154,7 +154,7 @@ class Game {
     }
     progress('SHAPING THE LAND…'); await this.frame();
     this.holeIndex = n;
-    this.course = new Course(makeHole(n));
+    this.course = new Course(holeFor(this.courseIndex, n));
     const g = this.holeGroup = new THREE.Group(); scene.add(g);
     progress('LAYING THE TURF…'); await this.frame();
     const terr = buildTerrain(this.course, this.tex); this.terrain = terr; g.add(terr.mesh);
@@ -220,16 +220,20 @@ class Game {
     this.menus.profilePicker(this.panel, this.store, (p) => {
       this.profile = this.store.select(p.name);
       this.hud.setCoins(this.profile.coins);
-      this.hud.message(`Welcome, ${this.profile.name}`, 2500, 'good');
-      if (this.holeIndex === 0 && this.scores.length === 0) this.startPlay();
-      else { this.audio.ensure(); this.scores = []; this.goToHole(0); }
+      this.menus.coursePicker(this.panel, COURSES.map((c, i) => ({ ...c, yards: courseYards(i) })), this.profile, (idx) => {
+        this.hud.message(`Welcome, ${this.profile.name}`, 2500, 'good');
+        this.audio.ensure();
+        if (idx === this.courseIndex && this.holeIndex === 0 && this.scores.length === 0) this.startPlay();
+        else { this.courseIndex = idx; this.scores = []; this.goToHole(0); }
+      });
     });
   }
 
   holeBlurb(L) {
     const bend = L.bendAngle === 0 ? '' : Math.abs(L.bendAngle) < 0.15 ? 'A gentle ' + (L.bendAngle > 0 ? 'left' : 'right') + ' turn' : 'Dogleg ' + (L.bendAngle > 0 ? 'left' : 'right');
     const water = L.pond ? (L.par === 3 ? 'water beside the green' : 'water ' + (L.bendAngle > 0 ? 'right' : 'left') + ' of the fairway') : 'no water';
-    return `Hole ${L.number} · Par ${L.par} · ${L.yards} yds. ${bend ? bend + ', ' : L.par === 3 ? 'A one-shotter, ' : ''}${water}, ${L.bunkers.length} bunkers.`;
+    const w2 = L.carry ? 'a carry over water' : water;
+    return `Hole ${L.number}${L.name ? ' · ' + L.name : ''} · Par ${L.par} · ${L.yards} yds. ${bend ? bend + ', ' : L.par === 3 ? 'A one-shotter, ' : ''}${w2}, ${L.bunkers.length} bunker${L.bunkers.length === 1 ? '' : 's'}.`;
   }
 
   startPlay() {
@@ -253,7 +257,7 @@ class Game {
     const tee = new THREE.Vector3(L.tee.x, this.course.heightAt(L.tee.x, L.tee.z), L.tee.z);
     this.flyLook = new THREE.CatmullRomCurve3([pin.clone(), pin.clone(), mid.clone(), mid2.clone().add(new THREE.Vector3(0, 0, -20)), tee.clone().add(new THREE.Vector3(0, 0, 40)), aim.look.clone()], false, 'centripetal');
     this.flyDur = L.par === 3 ? 6 : 8;
-    this.hud.message(`Hole ${L.number} · Par ${L.par} · ${L.yards} yds`, 3500, 'good');
+    this.hud.message(`Hole ${L.number}${L.name ? ' · ' + L.name : ''} · Par ${L.par} · ${L.yards} yds`, 3500, 'good');
     this.hud.setHint('<b>SPACE</b> skip');
     this.hud.setCamTag('COURSE FLYOVER'); this.hud.setSwingLabel('SKIP'); this.hud.setAimControls(false);
   }
@@ -875,7 +879,7 @@ class Game {
       const card = `<div class="scorecard">${Array.from({ length: HOLE_COUNT }, (_, i) => this.scores[i]).map((sc, i) => `<span class="${sc ? (sc.strokes < sc.par ? 'under' : sc.strokes > sc.par ? 'over' : '') : 'todo'}"><small>${i + 1}</small>${sc ? sc.strokes : '·'}</span>`).join('')}</div>`;
       const roundTotal = played.reduce((a, s) => a + s.strokes, 0);
       let bestTxt = '';
-      if (last && this.profile) { const prev = this.profile.bestRound; this.store.finishRound(this.profile, roundTotal, toPar); bestTxt = prev == null || roundTotal < prev ? ' · <b class="coin">new best!</b>' : ` · best ${this.profile.bestRound}`; }
+      if (last && this.profile) { const cid = this.L.courseId; const prev = this.profile.best && this.profile.best[cid] ? this.profile.best[cid].strokes : null; this.store.finishRound(this.profile, cid, roundTotal, toPar); bestTxt = prev == null || roundTotal < prev ? ' · <b class="coin">new best!</b>' : ` · best ${prev}`; }
       const coinsTxt = this.profile ? `<p><b class="coin">+${this.holeCoins} coins</b> · balance ◎ ${this.profile.coins}</p>` : '';
       this.panel.innerHTML = `<div class="sub">HOLE ${this.L.number} · PAR ${this.L.par}</div><div class="score">${this.finalName}</div><p>${this.finalTotal} stroke${this.finalTotal === 1 ? '' : 's'}${this.penalties ? ` · ${this.penalties} penalt${this.penalties === 1 ? 'y' : 'ies'}` : ''} &nbsp;·&nbsp; round <b>${toParTxt}</b> through ${played.length}</p>${coinsTxt}${card}${last ? `<p><b>Round complete: ${roundTotal} (${toParTxt})</b>${bestTxt}</p>` : ''}<div class="mfoot" style="justify-content:center;gap:10px"><button class="btn small" id="shopBtn">PRO SHOP</button>${last ? `<button class="btn small" id="profBtn">PLAYERS</button>` : ''}<button class="btn" id="nextBtn">${last ? 'PLAY AGAIN' : 'NEXT HOLE →'}</button></div>`;
       this.overlay.classList.remove('hidden');
@@ -890,8 +894,8 @@ class Game {
     if (this.loadingHole) return;
     this.loadingHole = true; this.state = 'loading'; this.endShown = false;
     this.golfer.group.visible = false; this.previewLine.visible = false; this.landRing.visible = false; this.trail.visible = false; this.puttRibbon.visible = false;
-    const L = makeHole(n);
-    this.panel.innerHTML = `<div class="sub">WALKING TO THE NEXT TEE</div><h1>HOLE ${L.number}</h1><div class="sub">PAR ${L.par} · ${L.yards} YDS</div><p>${this.holeBlurb(L)}</p><div id="loading">…</div>`;
+    const L = holeFor(this.courseIndex, n);
+    this.panel.innerHTML = `<div class="sub">${L.courseName.toUpperCase()} · WALKING TO THE NEXT TEE</div><h1>${L.name ? L.name.toUpperCase() : 'HOLE ' + L.number}</h1><div class="sub">PAR ${L.par} · ${L.yards} YDS</div><p>${this.holeBlurb(L)}</p><div id="loading">…</div>`;
     this.overlay.classList.remove('hidden');
     try {
       await this.buildHoleScene(n, (t) => { const el = document.getElementById('loading'); if (el) el.textContent = t; });

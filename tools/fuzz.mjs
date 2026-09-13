@@ -1,5 +1,5 @@
 // Random shots on every hole: looks for balls that never stop, NaNs, balls under the ground, and timeouts.
-import { Course, makeHole, HOLE_COUNT, SURF, splinePoint, splineLength } from '../src/courseData.js';
+import { Course, holeFor, HOLE_COUNT, SURF, splinePoint, splineLength } from '../src/courseData.js';
 import { CLUBS, shotParams, simulateShot, BALL_R } from '../src/physics.js';
 import { buildVegetation, TreeField } from '../src/vegetation.js';
 import { mulberry32 } from '../src/noise.js';
@@ -7,7 +7,7 @@ const rnd = mulberry32(42);
 let total = 0, timeouts = 0, nans = 0, under = 0, stuck = 0, holed = 0, water = 0, oob = 0, trees = 0, treeHits = 0;
 const t0 = Date.now();
 for (let n = 0; n < HOLE_COUNT; n++) {
-  const L = makeHole(n); const course = new Course(L);
+  const L = holeFor(parseInt(process.env.COURSE || '0', 10), n); const course = new Course(L);
   let field;
   try { field = buildVegetation(course, {}, { tufts: 10, reeds: 10 }).field; } catch (e) { console.log('veg build failed on hole', n + 1, e.message); field = new TreeField(); }
   const len = splineLength(L);

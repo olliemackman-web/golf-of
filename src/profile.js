@@ -46,9 +46,13 @@ export class ProfileStore {
     if (cost == null || p.coins < cost) return false;
     p.coins -= cost; p.upgrades[id] = lvl + 1; this.save(); return true;
   }
-  finishRound(p, strokes, toPar) {
+  finishRound(p, courseId, strokes, toPar) {
     p.rounds += 1;
-    if (p.bestRound == null || strokes < p.bestRound) { p.bestRound = strokes; p.bestToPar = toPar; }
+    p.best = p.best || {};
+    const b = p.best[courseId];
+    if (!b || strokes < b.strokes) p.best[courseId] = { strokes, toPar };
+    if (courseId === 'riverbend' && (p.bestRound == null || strokes < p.bestRound)) { p.bestRound = strokes; p.bestToPar = toPar; }
     this.save();
   }
+  bestFor(p, courseId) { if (p.best && p.best[courseId]) return p.best[courseId]; if (courseId === 'riverbend' && p.bestRound != null) return { strokes: p.bestRound, toPar: p.bestToPar }; return null; }
 }

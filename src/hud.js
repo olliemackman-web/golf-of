@@ -1,5 +1,6 @@
 // DOM overlay: hole card, wind, minimap, club, swing meter, messages.
 import { COURSE_NAME } from './courseData.js';
+const COURSE_TITLE = COURSE_NAME;
 
 const YD = 1.09361;
 export const yards = (m) => Math.round(m * YD);
@@ -38,7 +39,7 @@ export class Hud {
   setHole(course) {
     this.course = course; this.layout = course.layout;
     const L = this.layout;
-    this.el.hname.textContent = `${COURSE_NAME.toUpperCase()} · HOLE ${L.number}`;
+    this.el.hname.textContent = `${(L.courseName || COURSE_TITLE).toUpperCase()} · ${L.name ? L.number + ' · ' + L.name.toUpperCase() : 'HOLE ' + L.number}`;
     this.el.hpar.textContent = `PAR ${L.par}`;
     this.el.hyds.textContent = `${L.yards} YDS`;
     this.buildMinimap();

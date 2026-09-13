@@ -11,6 +11,90 @@ export const COURSE_NAME = 'Riverbend';
 // Par sequence: front 36, back 36 — 4 par threes, 10 fours, 4 fives.
 const PARS = [4, 3, 5, 4, 4, 3, 4, 5, 4, 4, 5, 3, 4, 4, 3, 4, 5, 4];
 
+// ---- Gosfield Lake: transcribed from the club's hole diagrams (white tees) ----
+// bend: degrees, + = dogleg LEFT, at = fraction along the hole where it starts.
+// bunkers: fairway {at, side:'L'|'R'} or greenside {green:'L'|'R'|'F'|'B'|'FL'|'FR'}.
+// pond: {at, side:'L'|'R'|'C' (carry over it), rx, rz}.
+const GOSFIELD = [
+  { name: "Gosfield Hall", par: 5, yards: 514, bend: { at: 0.68, deg: -10 }, bunkers: [{ at: 0.52, side: 'R', rx: 9, rz: 5.5 }, { green: 'FL', rx: 6, rz: 4.5 }] },
+  { name: 'Boat House', par: 3, yards: 174, bunkers: [{ green: 'FL', rx: 6, rz: 4 }, { green: 'F', rx: 5, rz: 4 }], green: { rx: 15, rz: 13 } },
+  { name: 'Lake Lookout', par: 4, yards: 370, bend: { at: 0.6, deg: 24 }, pond: { at: 0.86, side: 'L', rx: 18, rz: 22 }, bunkers: [{ green: 'R', rx: 6.5, rz: 4.5 }, { green: 'FR', rx: 5, rz: 4 }] },
+  { name: 'Cottage Park', par: 5, yards: 539, bend: { at: 0.55, deg: 18 }, bunkers: [] },
+  { name: 'Lake Wood', par: 3, yards: 187, pond: { at: 0.28, side: 'C', rx: 24, rz: 17 }, bunkers: [{ green: 'FR', rx: 5, rz: 4 }] },
+  { name: 'Pimlico', par: 5, yards: 534, bunkers: [{ at: 0.44, side: 'L', rx: 8, rz: 5 }, { at: 0.58, side: 'L', rx: 8, rz: 5 }, { green: 'B', rx: 6, rz: 4.5 }] },
+  { name: 'Swan Lake', par: 4, yards: 360, bend: { at: 0.66, deg: 12 }, pond: { at: 0.37, side: 'L', rx: 20, rz: 28 }, bunkers: [], green: { rx: 11, rz: 17, narrow: true } },
+  { name: 'Roman Crossing', par: 3, yards: 161, bunkers: [{ green: 'FR', rx: 6, rz: 4.5 }, { green: 'R', rx: 5, rz: 4 }] },
+  { name: "Rowe's Clock Tower", par: 4, yards: 365, bend: { at: 0.62, deg: -22 }, bunkers: [{ green: 'L', rx: 6.5, rz: 4.5 }] },
+  { name: "Commander's View", par: 4, yards: 395, bend: { at: 0.5, deg: -30 }, pond: { at: 0.5, side: 'L', rx: 24, rz: 30 }, bunkers: [{ green: 'R', rx: 6, rz: 4.5 }, { green: 'FR', rx: 5.5, rz: 4 }] },
+  { name: "Bridie's Fall", par: 5, yards: 486, bend: { at: 0.5, deg: 10 }, bunkers: [{ at: 0.42, side: 'L', rx: 8, rz: 5 }, { at: 0.5, side: 'R', rx: 8, rz: 5 }, { green: 'FL', rx: 6, rz: 4.5 }, { green: 'FR', rx: 6, rz: 4.5 }], green: { rx: 10, rz: 18, narrow: true } },
+  { name: 'Edmondsey', par: 4, yards: 409, bunkers: [{ at: 0.47, side: 'L', rx: 7, rz: 4.5 }, { at: 0.53, side: 'L', rx: 7, rz: 4.5 }] },
+  { name: 'Bounces', par: 4, yards: 330, bunkers: [{ at: 0.56, side: 'L', rx: 8, rz: 5 }, { at: 0.63, side: 'R', rx: 8, rz: 5 }, { green: 'R', rx: 6, rz: 4.5 }, { green: 'FR', rx: 5.5, rz: 4 }], green: { rx: 17, rz: 15 } },
+  { name: "Cotton's Choice", par: 4, yards: 432, pond: { at: 0.88, side: 'R', rx: 15, rz: 17 }, bunkers: [{ at: 0.46, side: 'R', rx: 8, rz: 5 }] },
+  { name: 'Pheasant Flight', par: 3, yards: 187, bunkers: [{ green: 'F', rx: 11, rz: 6, far: 4 }] },
+  { name: "Brake's Wood", par: 4, yards: 378, halfWidth: 13, bunkers: [{ green: 'R', rx: 5, rz: 4 }] },
+  { name: "O'Shea's Cottage", par: 3, yards: 157, bunkers: [{ green: 'L', rx: 6, rz: 4.5 }, { green: 'R', rx: 6, rz: 4.5 }] },
+  { name: 'Paddock Pond', par: 5, yards: 536, bend: { at: 0.7, deg: -12 }, pond: { at: 0.6, side: 'C', rx: 22, rz: 24 }, bunkers: [{ at: 0.44, side: 'L', rx: 9, rz: 5.5 }], green: { rx: 18, rz: 15 } },
+];
+
+export const COURSES = [
+  { id: 'riverbend', name: 'Riverbend', par: 72, blurb: 'Generated parkland — doglegs, ponds and deep bunkers.', hole: (n) => makeHole(n) },
+  { id: 'gosfield', name: 'Gosfield Lake', par: 72, blurb: 'The real Essex 18, hole by hole: Gosfield Hall to Paddock Pond.', hole: (n) => makeHoleFromSpec(GOSFIELD[n], n) },
+];
+export function holeFor(courseIndex, n) { const c = COURSES[courseIndex] || COURSES[0]; const L = c.hole(n); L.courseId = c.id; L.courseName = c.name; L.courseIndex = COURSES.indexOf(c); return L; }
+export function courseYards(courseIndex) { let t = 0; for (let i = 0; i < HOLE_COUNT; i++) t += holeFor(courseIndex, i).yards; return t; }
+
+/** Build a hole layout from a hand-written spec (same shape as makeHole's output). */
+export function makeHoleFromSpec(spec, n) {
+  const rnd = mulberry32(5100 + n * 331);
+  const par = spec.par;
+  const len = spec.yards * 0.9144 - 20; // tee box and pin offset make up the rest
+  const bendAt = spec.bend ? spec.bend.at : 0.6, bendAngle = spec.bend ? spec.bend.deg * Math.PI / 180 : 0;
+  const N = 9, ds = len / (N - 1);
+  const pts = []; let x = 0, z = -len / 2;
+  for (let i = 0; i < N; i++) {
+    pts.push([x, z]);
+    const s = (i + 0.5) / (N - 1);
+    const heading = bendAngle * smoothstep(bendAt, bendAt + 0.28, s);
+    x += Math.sin(heading) * ds; z += Math.cos(heading) * ds;
+  }
+  const last = pts[N - 1], prev = pts[N - 2];
+  const endDir = Math.atan2(last[0] - prev[0], last[1] - prev[1]);
+  const gs = spec.green || {};
+  const green = { x: last[0] + Math.sin(endDir) * 6, z: last[1] + Math.cos(endDir) * 6, rx: gs.rx || 14, rz: gs.rz || 12, rot: endDir + Math.PI / 2 + (gs.narrow ? 0 : (rnd() - 0.5) * 0.4) };
+  const pa = rnd() * Math.PI * 2, pr = rnd() * 4;
+  const pin = { x: green.x + Math.cos(pa) * pr, z: green.z + Math.sin(pa) * pr };
+  const tee = { x: pts[0][0], z: pts[0][1] - 14, w: 9, l: 14 };
+  const halfWidth = spec.halfWidth || (par === 3 ? 14 : 16);
+  const sideOf = (t, off) => {
+    const i = clamp(Math.round(t * (N - 1)), 1, N - 2);
+    const dx = pts[i + 1][0] - pts[i - 1][0], dz = pts[i + 1][1] - pts[i - 1][1], l = Math.hypot(dx, dz);
+    const rx = dz / l, rz = -dx / l; // + = left of the line
+    const u = t * (N - 1) - i; const bx = pts[i][0] + (pts[Math.min(N - 1, i + 1)][0] - pts[i][0]) * Math.max(0, u), bz = pts[i][1] + (pts[Math.min(N - 1, i + 1)][1] - pts[i][1]) * Math.max(0, u);
+    return { x: bx + rx * off, z: bz + rz * off, rot: Math.atan2(dx, dz) };
+  };
+  const bunkers = [];
+  const GA = { F: Math.PI, B: 0, L: Math.PI / 2, R: -Math.PI / 2, FL: 3 * Math.PI / 4, FR: -3 * Math.PI / 4 };
+  for (const b of spec.bunkers || []) {
+    if (b.green) {
+      const a = endDir + GA[b.green];
+      const r = Math.max(green.rx, green.rz) + 5 + (b.far || 0) + (b.green === 'F' ? 2 : 0);
+      bunkers.push({ x: green.x + Math.sin(a) * r, z: green.z + Math.cos(a) * r, rx: b.rx || 6, rz: b.rz || 4.5, rot: a + Math.PI / 2 });
+    } else {
+      const p = sideOf(b.at, (b.side === 'L' ? 1 : -1) * (halfWidth + 3));
+      bunkers.push({ x: p.x, z: p.z, rx: b.rx || 8, rz: b.rz || 5, rot: p.rot });
+    }
+  }
+  let pond = null;
+  if (spec.pond) {
+    const q = spec.pond;
+    const off = q.side === 'C' ? 0 : (q.side === 'L' ? 1 : -1) * (halfWidth + q.rx * 0.75);
+    const p = sideOf(q.at, off);
+    pond = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.rot + (q.side === 'C' ? Math.PI / 2 : 0) };
+  }
+  const size = Math.max(520, Math.ceil((len + 200) / 20) * 20);
+  return { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C' };
+}
+
 /** Deterministically design hole `n` (0-based). All distances in metres. */
 export function makeHole(n) {
   const rnd = mulberry32(9100 + n * 7919);
