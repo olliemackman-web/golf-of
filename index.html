@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Riverbend Golf — POV</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1118;overflow:hidden;font-family:"Helvetica Neue",Inter,Arial,sans-serif;color:#fff;-webkit-font-smoothing:antialiased}
+  canvas.gl{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:5}
+  .card{position:absolute;background:rgba(8,14,20,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:12px 16px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  .card.hole{left:22px;top:22px;min-width:220px}
+  .hname{font-size:11px;letter-spacing:.22em;opacity:.7;margin-bottom:6px}
+  .hrow{display:flex;justify-content:space-between;gap:18px;font-size:14px;font-weight:600;letter-spacing:.06em;margin-top:4px}
+  .hrow.strokes{font-size:12px;opacity:.85;font-weight:500}
+  .hrow b{font-weight:700;color:#c9ff5b}
+  .lie{font-size:11px;letter-spacing:.14em;opacity:.7;margin-top:8px;text-transform:uppercase}
+  .card.wind{right:22px;top:22px;width:70px;text-align:center;padding:10px 8px}
+  .wlabel{font-size:10px;letter-spacing:.22em;opacity:.7}
+  .wdial{width:48px;height:48px;margin:6px auto;border-radius:50%;border:1px solid rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center}
+  .warrow{font-size:22px;color:#c9ff5b;transition:transform .3s}
+  .wspeed{font-size:12px;font-weight:600}
+  #minimap{position:absolute;right:22px;top:140px;border-radius:8px;border:1px solid rgba(255,255,255,.15);box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  .meter{position:absolute;left:36px;top:50%;transform:translateY(-50%);width:60px;text-align:center;opacity:0;transition:opacity .25s}
+  .mlabel{font-size:10px;letter-spacing:.22em;opacity:.8;margin-bottom:8px}
+  .mbar{position:relative;width:20px;height:300px;margin:0 auto;border-radius:10px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.25);overflow:hidden}
+  .mzone{position:absolute;left:0;right:0;bottom:0;height:9%;background:rgba(201,255,91,.45)}
+  .mfill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(to top,#c9ff5b,#ffd23c 60%,#ff5a3c)}
+  .mmark{position:absolute;left:-2px;right:-2px;height:3px;background:#fff;box-shadow:0 0 6px #fff;display:none}
+  .mset{position:absolute;left:0;right:0;height:2px;background:rgba(255,255,255,.7);display:none}
+  .mpct{font-size:13px;font-weight:700;margin-top:8px;color:#c9ff5b}
+  .card.club{left:22px;bottom:22px;min-width:190px}
+  .cname{font-size:18px;font-weight:700}
+  .cdist{font-size:12px;opacity:.8;margin-top:2px}
+  .chint{font-size:10px;letter-spacing:.14em;opacity:.55;margin-top:8px}
+  .msg{position:absolute;left:50%;bottom:11%;transform:translateX(-50%) translateY(10px);font-size:22px;font-weight:700;letter-spacing:.04em;text-shadow:0 2px 12px rgba(0,0,0,.7);opacity:0;transition:opacity .25s,transform .25s;white-space:nowrap}
+  .msg.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .msg.good{color:#c9ff5b}.msg.bad{color:#ff8a7a}
+  .hint{position:absolute;right:22px;bottom:22px;font-size:11px;letter-spacing:.12em;opacity:.7;text-align:right;line-height:1.9}
+  .hint b{color:#c9ff5b;font-weight:700}
+  .camtag{position:absolute;left:50%;top:22px;transform:translateX(-50%);font-size:10px;letter-spacing:.3em;opacity:.55}
+  #overlay{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(6,12,18,.45),rgba(6,12,18,.85));transition:opacity .5s}
+  #overlay.hidden{opacity:0;pointer-events:none}
+  .panel{text-align:center;max-width:560px;padding:40px 48px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:rgba(8,14,20,.6);backdrop-filter:blur(10px)}
+  .panel h1{font-size:40px;letter-spacing:.06em;margin:0 0 4px;font-weight:800}
+  .panel .sub{font-size:12px;letter-spacing:.3em;opacity:.7;margin-bottom:22px}
+  .panel p{font-size:14px;line-height:1.7;opacity:.85;margin:6px 0}
+  .panel .keys{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;text-align:left;font-size:13px;margin:18px auto 22px;max-width:380px}
+  .panel .keys b{color:#c9ff5b;font-weight:700;letter-spacing:.06em}
+  .btn{display:inline-block;padding:12px 30px;border-radius:999px;background:#c9ff5b;color:#0b1118;font-weight:800;letter-spacing:.14em;font-size:13px;cursor:pointer;border:0}
+  .btn:hover{background:#dfff8f}
+  .score{font-size:64px;font-weight:900;color:#c9ff5b;margin:6px 0}
+  #loading{font-size:12px;letter-spacing:.3em;opacity:.8;margin-top:14px}
+  .controls{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:8px;align-items:center;pointer-events:auto}
+  .cbtn{pointer-events:auto;cursor:pointer;border:1px solid rgba(255,255,255,.22);background:rgba(8,14,20,.6);backdrop-filter:blur(8px);color:#fff;font:700 11px/1 "Helvetica Neue",Inter,Arial,sans-serif;letter-spacing:.14em;padding:12px 14px;border-radius:999px;touch-action:manipulation}
+  .cbtn:active{background:rgba(201,255,91,.35)}
+  .cbtn.big{background:#c9ff5b;color:#0b1118;font-size:14px;padding:16px 34px;letter-spacing:.2em;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .cbtn.big:active{background:#ffffff}
+  .target{position:absolute;right:22px;bottom:96px;width:170px;pointer-events:auto;background:rgba(8,14,20,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 12px 6px}
+  .tlabel{font-size:10px;letter-spacing:.18em;opacity:.8;margin-bottom:4px}
+  .tlabel b{color:#c9ff5b}
+  .target input{width:100%;margin:0;accent-color:#c9ff5b}
+  @media (max-width:900px),(pointer:coarse){
+    .card{padding:8px 10px;border-radius:8px}
+    .card.hole{left:10px;top:10px;min-width:150px}
+    .hname{font-size:9px;margin-bottom:3px}.hrow{font-size:12px;gap:10px}.hrow.strokes{font-size:10px}.lie{font-size:9px;margin-top:4px}
+    .card.wind{right:10px;top:10px;width:52px;padding:6px 4px}.wdial{width:34px;height:34px;margin:3px auto}.warrow{font-size:16px}.wspeed{font-size:10px}.wlabel{font-size:8px}
+    #minimap{right:10px;top:96px;width:96px;height:130px}
+    .meter{left:10px;top:44%;width:44px}.mbar{height:200px;width:16px}.mlabel{font-size:8px}.mpct{font-size:11px}
+    .card.club{left:10px;bottom:88px;min-width:120px}.cname{font-size:14px}.cdist{font-size:11px}.chint{display:none}
+    .hint{display:none}
+    .msg{font-size:16px;bottom:24%;white-space:normal;text-align:center;max-width:80vw}
+    .camtag{top:auto;bottom:92px;font-size:9px}
+    .controls{bottom:12px;gap:6px}.cbtn{padding:11px 11px;font-size:10px}.cbtn.big{padding:15px 24px;font-size:13px}
+    .target{right:10px;bottom:86px;width:130px;padding:6px 10px 4px}
+    .panel{padding:22px 20px;max-width:88vw}.panel h1{font-size:28px}.panel .keys{grid-template-columns:auto 1fr;font-size:11px;gap:4px 10px}.panel p{font-size:12px}
+  }
+  @media (max-height:450px){
+    #minimap{display:none}.card.wind{top:10px}.meter{top:50%}.card.club{bottom:70px}
+    .panel{padding:14px 18px}.panel h1{font-size:22px;margin:0}.panel .sub{margin-bottom:8px}.panel .keys{display:none}.panel p{margin:2px 0}
+  }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<canvas class="gl" id="gl"></canvas>
+<div id="hud"></div>
+<div id="overlay">
+  <div class="panel" id="panel">
+    <h1>RIVERBEND</h1>
+    <div class="sub">HOLE 1 · PAR 4 · FIRST PERSON</div>
+    <div id="loading">PREPARING THE COURSE…</div>
+  </div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
