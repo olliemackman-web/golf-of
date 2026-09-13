@@ -63,7 +63,7 @@ export function makeHole(n) {
   let pond = null;
   const wantWater = n === 0 || rnd() < 0.45;
   if (wantWater) {
-    if (par === 3) { const p = sideOf(0.55, (rnd() < 0.5 ? -1 : 1) * 22); pond = { x: p.x, z: p.z, rx: 22 + rnd() * 8, rz: 30 + rnd() * 10, rot: p.rot }; }
+    if (par === 3) { const rx = 20 + rnd() * 8, sgn = rnd() < 0.5 ? -1 : 1; const p = sideOf(0.55, sgn * (halfWidth + rx + 2)); pond = { x: p.x, z: p.z, rx, rz: 30 + rnd() * 10, rot: p.rot }; }
     else { const s = bendAngle > 0 ? -1 : 1; const p = sideOf(0.22 + rnd() * 0.18, s * (halfWidth + 30)); pond = { x: p.x, z: p.z, rx: 28 + rnd() * 8, rz: 40 + rnd() * 10, rot: p.rot + (rnd() - 0.5) * 0.4 }; }
   }
   const size = Math.max(520, Math.ceil((len + 200) / 20) * 20);

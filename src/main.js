@@ -124,7 +124,8 @@ class Game {
   async buildHoleScene(n, progress = () => {}) {
     const scene = this.scene;
     if (this.holeGroup) {
-      this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
+      const shared = new Set(Object.values(this.tex));
+      this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.map && !shared.has(m.map)) m.map.dispose(); if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
       if (this.terrain) this.terrain.maskTex.dispose();
     }
@@ -148,13 +149,16 @@ class Game {
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h); this.composer.setSize(w, h); this.bloom.setSize(w, h);
+    this.renderer.setSize(w, h); this.composer.setSize(w, h);
   }
 
   // ---------- setup / flow ----------
   newHole() {
     this.strokes = 1; this.penalties = 0; this.endShown = false;
     this.ball.place(this.L.tee.x, this.L.tee.z);
+    this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
+    this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
+    this.hud.setCamTag('');
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     const wa = this.rnd() * Math.PI * 2, ws = 0.8 + this.rnd() * 4.5;
     this.windBase = { x: Math.cos(wa) * ws, z: Math.sin(wa) * ws, speed: ws, angle: wa };
@@ -365,7 +369,10 @@ class Game {
     this.canvas.addEventListener('pointerdown', (e) => { if (this.state === 'title') return; dragging = true; lx = e.clientX; this.canvas.setPointerCapture(e.pointerId); });
     this.canvas.addEventListener('pointermove', (e) => { if (!dragging) return; const dx = e.clientX - lx; lx = e.clientX; if (this.state === 'aim') { this.aimYaw -= dx * 0.0032; this.previewDirty = true; } });
     this.canvas.addEventListener('pointerup', () => { dragging = false; });
-    this.canvas.addEventListener('wheel', (e) => { this.changeClub(e.deltaY > 0 ? 1 : -1); }, { passive: true });
+    this.canvas.addEventListener('pointercancel', () => { dragging = false; });
+    window.addEventListener('blur', () => { this.keys = {}; dragging = false; });
+    let wheelAcc = 0;
+    this.canvas.addEventListener('wheel', (e) => { wheelAcc += e.deltaY; if (Math.abs(wheelAcc) >= 60) { this.changeClub(wheelAcc > 0 ? 1 : -1); wheelAcc = 0; } }, { passive: true });
     window.addEventListener('keydown', (e) => {
       if (e.repeat) { this.keys[e.code] = true; return; }
       this.keys[e.code] = true;
@@ -394,6 +401,7 @@ class Game {
       case 'toAddress': break;
       case 'address': this.swingPress(); break;
       case 'swing': this.swingPress(); break;
+      case 'flight': if (this.swing && this.swing.pendingAcc) this.swingPress(); break;
       case 'holed': { const b = document.getElementById('nextBtn'); if (this.endShown && b) b.click(); break; }
     }
   }
@@ -455,7 +463,7 @@ class Game {
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
     this.previewLine.visible = false; this.landRing.visible = false;
-    this.hud.setSwingLabel('');
+    if (acc != null) this.hud.setSwingLabel(''); // otherwise keep STRIKE up until the late press lands
     this.hud.setHint(this.camMode === 'pov' ? '<b>C</b> ball camera' : '<b>C</b> first-person');
     this.hud.setCamTag('');
     if (acc == null) s.pendingAcc = true;
@@ -589,7 +597,8 @@ class Game {
     if (s && s.pendingAcc) {
       s.t += dt;
       if (s.acc != null) { s.acc = s.accT - (s.holdDelay + s.tDown); this.hud.accuracy({ sweep: 1, hit: 1, good: Math.abs(s.acc) < ACC_WINDOW * 0.35 }); this.applyLateAccuracy(); }
-      else if (s.t - (s.holdDelay + s.tDown) > 0.2) { s.acc = 0.2; s.accT = s.t; s.acc = 0.16; this.applyLateAccuracy(); this.hud.message('Late — pushed it', 1500, 'bad'); }
+      else if (s.t - (s.holdDelay + s.tDown) > 0.2) { s.accT = s.t; s.acc = ACC_WINDOW * 0.7; this.applyLateAccuracy(); this.hud.setSwingLabel(''); this.hud.message('Late — pushed it', 1500, 'bad'); }
+      if (!s.pendingAcc) this.hud.setSwingLabel('');
     }
     const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
     this.ball.step(Math.min(dt, 0.05));
@@ -737,7 +746,7 @@ class Game {
       const toPar = played.reduce((a, s) => a + s.strokes - s.par, 0);
       const toParTxt = toPar === 0 ? 'E' : toPar > 0 ? `+${toPar}` : `${toPar}`;
       const last = this.holeIndex >= HOLE_COUNT - 1;
-      const card = `<div class="scorecard">${this.scores.map((sc, i) => `<span class="${sc ? (sc.strokes < sc.par ? 'under' : sc.strokes > sc.par ? 'over' : '') : 'todo'}"><small>${i + 1}</small>${sc ? sc.strokes : '·'}</span>`).join('')}</div>`;
+      const card = `<div class="scorecard">${Array.from({ length: HOLE_COUNT }, (_, i) => this.scores[i]).map((sc, i) => `<span class="${sc ? (sc.strokes < sc.par ? 'under' : sc.strokes > sc.par ? 'over' : '') : 'todo'}"><small>${i + 1}</small>${sc ? sc.strokes : '·'}</span>`).join('')}</div>`;
       this.panel.innerHTML = `<div class="sub">HOLE ${this.L.number} · PAR ${this.L.par}</div><div class="score">${this.finalName}</div><p>${this.finalTotal} stroke${this.finalTotal === 1 ? '' : 's'}${this.penalties ? ` · ${this.penalties} penalt${this.penalties === 1 ? 'y' : 'ies'}` : ''} &nbsp;·&nbsp; round <b>${toParTxt}</b> through ${played.length}</p>${card}${last ? `<p><b>Round complete: ${played.reduce((a, s) => a + s.strokes, 0)} (${toParTxt})</b></p><button class="btn" id="nextBtn">PLAY AGAIN</button>` : `<button class="btn" id="nextBtn">NEXT HOLE →</button>`}`;
       this.overlay.classList.remove('hidden');
       document.getElementById('nextBtn').onclick = () => { if (last) { this.scores = []; this.goToHole(0); } else this.goToHole(this.holeIndex + 1); };
@@ -786,7 +795,7 @@ class Game {
     const dt = Math.min(0.05, this.clock.getDelta());
     const w = window.innerWidth, h = window.innerHeight;
     if (w === 0 || h === 0) return;
-    if (this.canvas.width !== Math.round(w * this.renderer.getPixelRatio()) || this.canvas.height !== Math.round(h * this.renderer.getPixelRatio())) this.resize();
+    if (this.canvas.width !== Math.floor(w * this.renderer.getPixelRatio()) || this.canvas.height !== Math.floor(h * this.renderer.getPixelRatio())) this.resize();
     if (this.paused) { if (this.debugCam) { this.camera.position.copy(this.debugCam.pos); this.camera.lookAt(this.debugCam.look); } this.composer.render(); return; }
     if (this.state !== 'loading' && this.state !== 'title') this.update(dt);
     else { this.time += dt; setWindTime(this.time); if (this.state === 'title') { const p = this.aimPose(); this.camera.position.copy(p.pos); this.lookDir.subVectors(p.look, p.pos).normalize(); this.setLook(); this.updateSun(); } }
@@ -796,4 +805,4 @@ class Game {
 
 const game = new Game();
 window.__game = game;
-game.init().catch((e) => { console.error(e); document.getElementById('loading').textContent = 'ERROR: ' + e.message; });
+game.init().catch((e) => { console.error(e); const el = document.getElementById('loading') || document.getElementById('panel'); if (el) el.textContent = 'ERROR: ' + e.message; });
