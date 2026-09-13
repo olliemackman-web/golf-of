@@ -172,7 +172,10 @@ export function buildVegetation(course, tex, quality = {}) {
       const endDir = L.spline.length > 1 ? Math.atan2(L.spline[L.spline.length - 1][0] - L.spline[L.spline.length - 2][0], L.spline[L.spline.length - 1][1] - L.spline[L.spline.length - 2][1]) : 0;
       const ahead = gdx * Math.sin(endDir) + gdz * Math.cos(endDir);
       const behind = ahead > 32 && Math.abs(gdx * Math.cos(endDir) - gdz * Math.sin(endDir)) < 140;
-      if (d < sc.woodland.beyond && !behind) continue;
+      // which side of the line is this point on? (left normal of the hole direction at the nearest point)
+      const fr = alongHole(L, t, 0); const leftness = (x - fr.x) * Math.cos(fr.dir) - (z - fr.z) * Math.sin(fr.dir);
+      const beyond = leftness > 0 ? (sc.woodland.beyondL != null ? sc.woodland.beyondL : sc.woodland.beyond) : (sc.woodland.beyondR != null ? sc.woodland.beyondR : sc.woodland.beyond);
+      if (d < beyond && !behind) continue;
       if (behind && rnd() < 0.35) continue;
     }
     const dens = fbm(x / 120 + 1, z / 120 + 3, 3) * 0.5 + 0.5;

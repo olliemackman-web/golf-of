@@ -39,7 +39,23 @@ const GOSFIELD = [
       lake: { at: 1.1, off: -38, rx: 26, rz: 16 },       // behind the green, right — reeds along it
       woodland: { beyond: 120, behindGreen: 1.14 },       // dense trees only far out and past the green
     } },
-  { name: 'Boat House', par: 3, yards: 174, bunkers: [{ green: 'FL', rx: 6, rz: 4 }, { green: 'F', rx: 5, rz: 4 }], green: { rx: 15, rz: 13 } },
+  { name: 'Boat House', par: 3, yards: 174, halfWidth: 21, fairwayFromTee: true,
+    // Drone footage: a wide mown fan from the tee, the reedy lake down the left behind a line of
+    // oaks, a big double oak short-left of the green, three bunkers ~20 yds short, woods behind.
+    bunkers: [{ at: 0.86, off: 7, rx: 4.5, rz: 3 }, { at: 0.89, off: 0, rx: 5, rz: 3.2 }, { at: 0.9, off: -13, rx: 5.5, rz: 3.4 }],
+    green: { rx: 14, rz: 13 },
+    scenery: {
+      style: 'parkland', tufts: 0.35,
+      lake: { at: 0.42, off: 50, rx: 24, rz: 58 },
+      trees: [
+        { at: 0.06, off: 24, kind: 'oak', h: 12 }, { at: 0.16, off: 27, kind: 'willow', h: 10 }, { at: 0.28, off: 24, kind: 'oak', h: 11 },
+        { at: 0.4, off: 26, kind: 'oak', h: 13 }, { at: 0.52, off: 28, kind: 'willow', h: 11 }, { at: 0.63, off: 25, kind: 'oak', h: 14 },
+        { at: 0.78, off: 21, kind: 'oak', h: 17 }, { at: 0.81, off: 18, kind: 'oak', h: 14 },   // the double oak short-left of the green
+        { at: 0.75, off: -34, kind: 'oak', h: 10 }, { at: 0.94, off: -24, kind: 'oak', h: 11 }, { at: 1.05, off: -30, kind: 'oak', h: 9 },
+        { at: 1.06, off: 14, kind: 'oak', h: 15 }, { at: 1.08, off: -4, kind: 'oak', h: 16 }, { at: 1.1, off: 28, kind: 'willow', h: 12 }, { at: 1.12, off: 6, kind: 'oak', h: 14 },
+      ],
+      woodland: { beyond: 62, beyondR: 150, behindGreen: 1.1 },
+    } },
   { name: 'Lake Lookout', par: 4, yards: 370, bend: { at: 0.6, deg: 24 }, pond: { at: 0.86, side: 'L', rx: 18, rz: 22 }, bunkers: [{ green: 'R', rx: 6.5, rz: 4.5 }, { green: 'FR', rx: 5, rz: 4 }] },
   { name: 'Cottage Park', par: 5, yards: 539, bend: { at: 0.55, deg: 18 }, bunkers: [] },
   { name: 'Lake Wood', par: 3, yards: 187, pond: { at: 0.28, side: 'C', rx: 24, rz: 17 }, bunkers: [{ green: 'FR', rx: 5, rz: 4 }] },
@@ -102,7 +118,7 @@ export function makeHoleFromSpec(spec, n) {
       const r = Math.max(green.rx, green.rz) + 5 + (b.far || 0) + (b.green === 'F' ? 2 : 0);
       bunkers.push({ x: green.x + Math.sin(a) * r, z: green.z + Math.cos(a) * r, rx: b.rx || 6, rz: b.rz || 4.5, rot: a + Math.PI / 2 });
     } else {
-      const p = sideOf(b.at, (b.side === 'L' ? 1 : -1) * (halfWidth + 3));
+      const p = sideOf(b.at, b.off != null ? b.off : (b.side === 'L' ? 1 : -1) * (halfWidth + 3));
       bunkers.push({ x: p.x, z: p.z, rx: b.rx || 8, rz: b.rz || 5, rot: p.rot });
     }
   }
@@ -114,7 +130,7 @@ export function makeHoleFromSpec(spec, n) {
     pond = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.rot + (q.side === 'C' ? Math.PI / 2 : 0) };
   }
   const size = Math.max(520, Math.ceil((len + 200) / 20) * 20);
-  const L = { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C', scenery: spec.scenery || null };
+  const L = { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C', scenery: spec.scenery || null, fairwayFromTee: !!spec.fairwayFromTee };
   if (spec.scenery && spec.scenery.lake) {
     const q = spec.scenery.lake; const p = alongHole(L, q.at, q.off);
     const lake = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.dir, seed: 7 };
@@ -340,7 +356,7 @@ export function surfaceWeights(L, x, z) {
   const n = fbm(x / 16 + 5, z / 16 - 2, 3, 2, 0.5);
   const { d, t } = splineDist(L, x, z);
   let fairway = smoothstep(L.halfWidth + 3, L.halfWidth - 3, d + n * 6) * smoothstep(0.0, 0.03, t);
-  if (L.par === 3) fairway *= smoothstep(0.15, 0.3, t); // par 3s carry rough before the fairway
+  if (L.par === 3 && !L.fairwayFromTee) fairway *= smoothstep(0.15, 0.3, t); // par 3s carry rough before the fairway
   const eg = ellipseDist(x, z, L.green) + n * 0.05;
   const green = smoothstep(1.06, 0.97, eg);
   fairway = Math.max(fairway, smoothstep(1.55, 1.12, eg));
