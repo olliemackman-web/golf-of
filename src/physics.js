@@ -44,7 +44,7 @@ export class Ball {
     this.events = [];
     this.n = { x: 0, y: 1, z: 0 };
     this.airTime = 0; this.maxHeight = 0; this.carry = null; this.launchPos = null; this.bounces = 0;
-    this.timeSinceLaunch = 0; this.treeCooldown = 0;
+    this.timeSinceLaunch = 0; this.treeCooldown = 0; this.slowTime = 0;
   }
 
   place(x, z) {
@@ -68,7 +68,7 @@ export class Ball {
     if (this.mode === 'roll') { this.pos.y = this.course.heightAt(this.pos.x, this.pos.z) + BALL_R; }
     this.airTime = 0; this.maxHeight = 0; this.carry = null; this.bounces = 0; this.timeSinceLaunch = 0;
     this.launchPos = { x: this.pos.x, y: this.pos.y, z: this.pos.z };
-    this.events.length = 0; this.treeCooldown = 0;
+    this.events.length = 0; this.treeCooldown = 0; this.slowTime = 0;
   }
 
   step(dt) {
@@ -78,6 +78,7 @@ export class Ball {
     for (let i = 0; i < sub; i++) {
       if (this.mode === 'fly') this.stepFly(h); else if (this.mode === 'roll') this.stepRoll(h);
       if (this.mode === 'fly' || this.mode === 'roll') this.timeSinceLaunch += h;
+      if (this.timeSinceLaunch > 45 && (this.mode === 'fly' || this.mode === 'roll')) this.stop(); // nothing real takes this long
       if (this.mode === 'rest' || this.mode === 'holed' || this.mode === 'water' || this.mode === 'oob') break;
     }
   }
@@ -190,6 +191,9 @@ export class Ball {
     const sp2 = Math.hypot(v.x, v.y, v.z);
     const slope = 1 - n.y;
     if (sp2 < 0.04 && slope < 0.06) this.stop();
+    // A ball creeping back and forth in a hollow never crosses the threshold above: call it stopped
+    // once it has been nearly stationary for a while.
+    if (sp2 < 0.3) { this.slowTime += h; if (this.slowTime > 1.2) this.stop(); } else this.slowTime = 0;
   }
 
   checkHole(sp) {
