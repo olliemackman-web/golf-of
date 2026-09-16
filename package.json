@@ -1,1 +1,25 @@
-{ "name": "golf-pov", "private": true, "type": "module" }
+{
+  "name": "golf-pov",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8765 --bind 0.0.0.0",
+    "lint": "eslint .",
+    "check": "node tools/test.mjs",
+    "test": "npm run lint && node tools/test.mjs",
+    "test:browser": "node tools/smoke.mjs && node tools/smoke.mjs --mobile",
+    "holes": "node tools/holes.mjs",
+    "calibrate": "node tools/calibrate.mjs",
+    "fuzz": "node tools/fuzz.mjs",
+    "perf": "node tools/perf.mjs",
+    "shots": "node tools/shots.mjs"
+  },
+  "dependencies": {
+    "three": "file:vendor/three"
+  },
+  "devDependencies": {
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
+    "playwright": "^1.56.1"
+  }
+}

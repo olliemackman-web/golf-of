@@ -3,10 +3,12 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
-import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers } from './terrain.js';
-import { buildVegetation, setWindTime } from './vegetation.js';
+import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
+import { buildVegetation, setWindTime, TreeField } from './vegetation.js';
+import { buildAsteroids } from './space.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
 import { GameAudio } from './audio.js';
@@ -15,7 +17,8 @@ import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.6, T_ACC_PUTT = 0.75;
+const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.75, T_ACC_PUTT = 0.9;
+import { ACC_BANDS } from './hud.js';
 
 class Game {
   constructor() {
@@ -43,28 +46,30 @@ class Game {
     r.setPixelRatio(this.quality.dpr);
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.9;
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0;
     const scene = this.scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xc4d3e2, 0.00068);
+    // fog colour matches the sky dome at the horizon so distant trees and hills melt into it
+    scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.00054);
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.05, 6000);
     this.lookDir = new THREE.Vector3(0, 0, 1);
 
     await this.frame(); document.getElementById('loading').textContent = 'PAINTING TEXTURES…'; await this.frame();
     this.tex = buildTextures();
-    const { sunDir, envMap } = buildSky(r, scene);
-    this.sunDir = sunDir; this.envMap = envMap;
+    this.skyCtl = buildSky(r, scene);
+    this.sunDir = this.skyCtl.sunDir; this.envMap = this.skyCtl.envMap; this.spaceMode = false;
     this.clouds = buildClouds(this.tex); scene.add(this.clouds);
     this.holeGroup = null; this.scores = []; this.holeIndex = 0; this.courseIndex = 0;
     await this.buildHoleScene(0, (t) => { document.getElementById('loading').textContent = t; });
 
-    // lights
-    const sun = this.sun = new THREE.DirectionalLight(0xfff2dc, 2.8);
+    // lights: a warm key from the sun, cool fill from the sky, so shadows go blue rather than grey
+    const sun = this.sun = new THREE.DirectionalLight(0xffe7c4, 3.1);
     sun.castShadow = true; sun.shadow.mapSize.set(this.quality.shadow, this.quality.shadow);
     const sr = this.quality.shadowRange;
     const sc = sun.shadow.camera; sc.near = 1; sc.far = 700; sc.left = -sr; sc.right = sr; sc.top = sr; sc.bottom = -sr;
     sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.5; sun.shadow.radius = 2;
     scene.add(sun); scene.add(sun.target);
-    scene.add(new THREE.HemisphereLight(0xbfd6f5, 0x4d6132, 0.45));
+    this.hemi = new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.5); scene.add(this.hemi);
+    if (this.spaceMode) this.applyAtmosphere(true); // the first hole may already be a Starfall hole
 
     // ball
     const bmat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0, clearcoat: 0.8, clearcoatRoughness: 0.2, bumpMap: this.tex.ballBump, bumpScale: 0.0008 });
@@ -109,9 +114,18 @@ class Game {
       const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { samples: this.quality.msaa, type: THREE.HalfFloatType });
       this.composer = new EffectComposer(r, rt);
       this.composer.addPass(new RenderPass(scene, this.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.16, 0.6, 0.88);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.14, 0.6, 0.86);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
+      // final grade: a touch more saturation and contrast, and a soft vignette to frame the view
+      this.composer.addPass(new ShaderPass({
+        uniforms: { tDiffuse: { value: null }, uVignette: { value: 0.3 }, uSat: { value: 1.08 }, uContrast: { value: 1.05 } },
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        fragmentShader: `uniform sampler2D tDiffuse; uniform float uVignette, uSat, uContrast; varying vec2 vUv;
+          void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+          c.rgb = mix(vec3(l), c.rgb, uSat); c.rgb = (c.rgb - 0.5) * uContrast + 0.5;
+          vec2 d = vUv - 0.5; c.rgb *= 1.0 - uVignette * smoothstep(0.3, 1.0, dot(d, d) * 2.2); gl_FragColor = c; }`,
+      }));
     } else {
       // mobile: plain forward render, no post chain
       this.composer = { render: () => r.render(scene, this.camera), setSize: () => {} };
@@ -150,25 +164,45 @@ class Game {
       const shared = new Set(Object.values(this.tex));
       this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.map && !shared.has(m.map)) m.map.dispose(); if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
-      if (this.terrain) this.terrain.maskTex.dispose();
+      if (this.terrain) { this.terrain.maskTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
     }
     progress('SHAPING THE LAND…'); await this.frame();
     this.holeIndex = n;
     this.course = new Course(holeFor(this.courseIndex, n));
+    const space = !!this.L.space;
+    if (space !== this.spaceMode) { this.spaceMode = space; if (this.sun) this.applyAtmosphere(space); }
     const g = this.holeGroup = new THREE.Group(); scene.add(g);
-    progress('LAYING THE TURF…'); await this.frame();
-    const terr = buildTerrain(this.course, this.tex); this.terrain = terr; g.add(terr.mesh);
+    progress(space ? 'RAISING THE ISLANDS…' : 'LAYING THE TURF…'); await this.frame();
+    const terr = buildTerrain(this.course, this.tex, this.sunDir, { lite: this.isMobile, space }); this.terrain = terr; g.add(terr.mesh);
     this.water = buildWater(this.course, this.tex, this.envMap); if (this.water) g.add(this.water);
-    g.add(buildFarHills(this.course));
+    this.asteroids = null;
+    if (space) { this.asteroids = buildAsteroids(this.course, n); g.add(this.asteroids); } else g.add(buildFarHills(this.course));
     this.holeObj = buildHole(this.course, this.tex); g.add(this.holeObj);
     g.add(buildTeeMarkers(this.course));
-    progress('PLANTING TREES…'); await this.frame();
-    const veg = buildVegetation(this.course, this.tex, this.quality.veg); g.add(veg.group); this.trees = veg.field;
+    if (space) { this.trees = new TreeField(); }
+    else {
+      progress('PLANTING TREES…'); await this.frame();
+      const veg = buildVegetation(this.course, this.tex, this.quality.veg); g.add(veg.group); this.trees = veg.field;
+      if (veg.ao) terr.uniforms.tAO.value = veg.ao;
+    }
     if (this.ball) { this.ball.course = this.course; this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin; }
     if (this.hud) this.hud.setHole(this.course);
   }
 
   get L() { return this.course.layout; }
+
+  /** Ground height for cameras and markers: never below the water or void level. */
+  groundY(x, z) { return Math.max(this.course.heightAt(x, z), this.course.waterLevel); }
+
+  /** Day on the parkland courses, deep space on Starfall: sky, fog, fill light and clouds. */
+  applyAtmosphere(space) {
+    this.envMap = this.skyCtl.setSpace(space);
+    this.scene.fog.color.set(space ? 0x000000 : HORIZON);
+    this.scene.fog.density = space ? 0.0011 : 0.00054;
+    this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.5;
+    this.sun.color.set(space ? 0xfff6ea : 0xffe7c4); this.sun.intensity = space ? 3.4 : 3.1;
+    if (this.clouds) this.clouds.visible = !space;
+  }
 
   /** Everything the profile's upgrades and the chosen spin change about a shot. */
   mods() {
@@ -230,6 +264,11 @@ class Game {
   }
 
   holeBlurb(L) {
+    if (L.space) {
+      const k = L.space.islands.length;
+      const isl = k === 0 ? 'Nothing between the tee and the green but void' : k === 1 ? 'One island to carry to, then the green' : `${k} islands to pick a route through`;
+      return `Hole ${L.number} · ${L.name} · Par ${L.par} · ${L.yards} yds. ${isl}${L.bunkers.length ? `, ${L.bunkers.length} crater${L.bunkers.length === 1 ? '' : 's'}` : ''}. Miss an island and the ball is gone.`;
+    }
     const bend = L.bendAngle === 0 ? '' : Math.abs(L.bendAngle) < 0.15 ? 'A gentle ' + (L.bendAngle > 0 ? 'left' : 'right') + ' turn' : 'Dogleg ' + (L.bendAngle > 0 ? 'left' : 'right');
     const water = L.pond ? (L.par === 3 ? 'water beside the green' : 'water ' + (L.bendAngle > 0 ? 'right' : 'left') + ' of the fairway') : 'no water';
     const w2 = L.carry ? 'a carry over water' : water;
@@ -244,17 +283,17 @@ class Game {
 
   beginFlyover() {
     this.state = 'flyover'; this.flyT = 0;
-    const L = this.L, sp = L.spline, n = sp.length, pin = new THREE.Vector3(L.pin.x, this.course.heightAt(L.pin.x, L.pin.z), L.pin.z);
+    const L = this.L, sp = L.spline, n = sp.length, pin = new THREE.Vector3(L.pin.x, this.groundY(L.pin.x, L.pin.z), L.pin.z);
     const de = new THREE.Vector3(sp[n - 1][0] - sp[n - 3][0], 0, sp[n - 1][1] - sp[n - 3][1]).normalize();
     const m1 = sp[Math.round((n - 1) * 0.55)], m2 = sp[Math.round((n - 1) * 0.25)];
-    const mid = new THREE.Vector3(m1[0], this.course.heightAt(m1[0], m1[1]), m1[1]);
-    const mid2 = new THREE.Vector3(m2[0], this.course.heightAt(m2[0], m2[1]), m2[1]);
+    const mid = new THREE.Vector3(m1[0], Math.max(this.groundY(m1[0], m1[1]), 0), m1[1]);
+    const mid2 = new THREE.Vector3(m2[0], Math.max(this.groundY(m2[0], m2[1]), 0), m2[1]);
     const aim = this.aimPose();
     const A = pin.clone().addScaledVector(de, 55).add(new THREE.Vector3(0, 34, 0));
     const B = mid.clone().add(new THREE.Vector3(-45, 42, 0));
     const C = mid2.clone().add(new THREE.Vector3(-25, 26, -20));
     this.flyPath = new THREE.CatmullRomCurve3([A, B, C, aim.pos.clone().add(new THREE.Vector3(0, 6, -8)), aim.pos.clone()], false, 'centripetal');
-    const tee = new THREE.Vector3(L.tee.x, this.course.heightAt(L.tee.x, L.tee.z), L.tee.z);
+    const tee = new THREE.Vector3(L.tee.x, this.groundY(L.tee.x, L.tee.z), L.tee.z);
     this.flyLook = new THREE.CatmullRomCurve3([pin.clone(), pin.clone(), mid.clone(), mid2.clone().add(new THREE.Vector3(0, 0, -20)), tee.clone().add(new THREE.Vector3(0, 0, 40)), aim.look.clone()], false, 'centripetal');
     this.flyDur = L.par === 3 ? 6 : 8;
     this.hud.message(`Hole ${L.number}${L.name ? ' · ' + L.name : ''} · Par ${L.par} · ${L.yards} yds`, 3500, 'good');
@@ -271,7 +310,7 @@ class Game {
     this.hud.setCamTag('');
     this.updateLieHud();
     this.previewDirty = true;
-    if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line — release to putt');
+    if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line &nbsp; <b>W / S</b> fine-tune pace &nbsp; <b>SPACE</b> putt when ready');
     else this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>V</b> view &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
     this.hud.setSwingLabel(this.club.putter ? 'PUTT' : 'ADDRESS'); this.hud.setAimControls(true);
   }
@@ -284,7 +323,7 @@ class Game {
     this.golfer.group.visible = true;
   }
 
-  /** Release of the putting drag: go straight to the accuracy bar with the pulled-back pace. */
+  /** PUTT pressed: go straight to the accuracy bar with the pace and line set while aiming. */
   commitPutt() {
     if (this.state !== 'aim' || !this.club.putter) return;
     this.placePutterRig();
@@ -415,11 +454,11 @@ class Game {
       return { pos, look };
     }
     if (this.aimView === 'landing' && this.previewEnd) {
-      const e = this.previewEnd; const ey = this.course.heightAt(e.x, e.z);
+      const e = this.previewEnd; const ey = this.groundY(e.x, e.z);
       const dist = Math.hypot(e.x - b.x, e.z - b.z);
       const back = clamp(dist * 0.35, 6, 26), up = clamp(dist * 0.3, 5, 24);
       const pos = new THREE.Vector3(e.x, 0, e.z).addScaledVector(dir, -back).addScaledVector(right, back * 0.35);
-      pos.y = Math.max(ey + up, this.course.heightAt(pos.x, pos.z) + 2.5);
+      pos.y = Math.max(ey + up, this.groundY(pos.x, pos.z) + 2.5);
       const look = new THREE.Vector3(e.x, ey, e.z).addScaledVector(dir, 3);
       return { pos, look };
     }
@@ -440,7 +479,7 @@ class Game {
     const n = Math.min(pts.length, 900);
     for (let i = 0; i < n; i++) { arr[i * 3] = pts[i].x; arr[i * 3 + 1] = Math.max(pts[i].y, this.course.heightAt(pts[i].x, pts[i].z)) + 0.06; arr[i * 3 + 2] = pts[i].z; }
     g.setDrawRange(0, n); g.attributes.position.needsUpdate = true;
-    const e = res.end; this.landRing.position.set(e.x, this.course.heightAt(e.x, e.z) + 0.05, e.z);
+    const e = res.end; this.landRing.position.set(e.x, this.groundY(e.x, e.z) + 0.05, e.z);
     const scale = this.club.putter ? 0.25 : 1; this.landRing.scale.set(scale, scale, 1);
     if (this.club.putter) {
       this.previewLine.visible = false;
@@ -479,24 +518,21 @@ class Game {
     this.canvas.addEventListener('pointerdown', (e) => {
       if (this.state === 'title' || (this.menus && this.menus.open)) return;
       dragging = true; lx = e.clientX; try { this.canvas.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events */ }
-      drag = { sx: e.clientX, sy: e.clientY, yaw: this.aimYaw, power: this.planPower, moved: false, putt: this.state === 'aim' && this.club.putter };
+      drag = { sx: e.clientX, sy: e.clientY, yaw: this.aimYaw, power: this.planPower, putt: this.state === 'aim' && this.club.putter };
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (!dragging || this.state !== 'aim') return;
       const dx = e.clientX - lx; lx = e.clientX;
       if (drag && drag.putt) {
-        // pull back for pace, slide sideways for the line
+        // pull back for pace, slide sideways for the line; each drag adjusts from where the last one left off
         const pull = e.clientY - drag.sy, side = e.clientX - drag.sx;
-        if (Math.hypot(pull, side) > 8) drag.moved = true;
         this.planPower = clamp(drag.power + pull / (window.innerHeight * 0.45), 0.08, 1);
         this.aimYaw = drag.yaw - side * (this.isMobile ? 0.0022 : 0.0016);
         this.previewDirty = true; this.placePutterRig();
       } else { this.aimYaw -= dx * 0.0032; this.previewDirty = true; }
     });
-    const release = () => {
-      const d = drag; dragging = false; drag = null;
-      if (d && d.putt && d.moved && this.state === 'aim' && this.club.putter) { this.updatePreview(); this.commitPutt(); }
-    };
+    // Lifting the finger keeps the pace and line; the PUTT button (or Space) commits the putt.
+    const release = () => { dragging = false; drag = null; if (this.state === 'aim' && this.previewDirty) this.updatePreview(); };
     this.canvas.addEventListener('pointerup', release);
     this.canvas.addEventListener('pointercancel', () => { dragging = false; drag = null; });
     window.addEventListener('blur', () => { this.keys = {}; dragging = false; });
@@ -569,7 +605,7 @@ class Game {
   meterTime() { return this.club.putter ? T_METER_PUTT : T_METER; }
   accTime() { return this.club.putter ? T_ACC_PUTT : T_ACC; }
 
-  /** Club pauses at the top; the accuracy marker ping-pongs until the player strikes. */
+  /** Club pauses at the top; the accuracy marker ping-pongs for as long as it takes the player to strike. */
   startAccuracy() {
     const s = this.swing;
     s.phase = 'acc'; s.t = 0; s.pos = 0; s.dir = 1; s.sweeps = 0;
@@ -583,18 +619,28 @@ class Game {
     const s = this.swing;
     if (s.phase !== 'acc') return;
     s.acc = (s.pos - 0.5) * 2; // -1 left .. +1 right of centre
-    this.hud.accuracy({ pos: s.pos, hit: s.pos, good: Math.abs(s.acc) <= 0.2 });
+    this.hud.accuracy({ pos: s.pos, hit: s.pos });
     s.phase = 'down'; s.t = 0;
     this.golfer.beginDownswing(this.club.putter ? T_DOWN_PUTT : T_DOWN, () => this.impact());
     this.hud.setSwingLabel('');
   }
 
+  /**
+   * Miss size from where the marker was stopped, -1..1. Gold is flush; green is a whisper off line;
+   * amber is a visible push or pull with some curve; red is a proper hook or slice. Forgiveness
+   * upgrades soften it; putts are gentler.
+   */
   accuracyValue() {
     const s = this.swing;
     if (s.acc == null) return 0;
-    // inside the green zone counts as flush; beyond it the miss grows, softened by forgiveness
-    const a = Math.abs(s.acc) <= 0.2 ? 0 : (s.acc - Math.sign(s.acc) * 0.2) / 0.8;
-    return clamp(a * this.mods().accScale, -1, 1) * (this.club.putter ? 0.6 : 1);
+    const a = Math.abs(s.acc), sign = Math.sign(s.acc);
+    const B = ACC_BANDS;
+    let m;
+    if (a <= B.gold) m = 0;
+    else if (a <= B.green) m = lerp(0.03, 0.15, (a - B.gold) / (B.green - B.gold));
+    else if (a <= B.amber) m = lerp(0.15, 0.5, (a - B.green) / (B.amber - B.green));
+    else m = lerp(0.5, 1.0, (a - B.amber) / (1 - B.amber));
+    return clamp(sign * m * this.mods().accScale, -1, 1) * (this.club.putter ? 0.6 : 1);
   }
 
   impact() {
@@ -614,6 +660,8 @@ class Game {
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
+    // every full shot is followed on the ball cam; C flips back to the eyes mid-flight. Putts stay at eye level.
+    if (!this.club.putter) { this.camMode = 'chase'; this.chaseDir = null; }
     this.previewLine.visible = false; this.landRing.visible = false; this.puttRibbon.visible = false;
     this.hud.setSwingLabel('');
     this.hud.setHint(this.camMode === 'pov' ? '<b>C</b> ball camera' : '<b>C</b> first-person');
@@ -625,6 +673,7 @@ class Game {
     this.time += dt;
     setWindTime(this.time);
     this.clouds.userData.update(dt);
+    if (this.asteroids) this.asteroids.userData.update(dt);
     const w = this.wind(this.time);
     this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) + Math.PI);
     if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
@@ -718,8 +767,7 @@ class Game {
     } else if (s.phase === 'acc') {
       s.pos += s.dir * dt / this.accTime();
       if (s.pos >= 1) { s.pos = 1; s.dir = -1; s.sweeps++; } else if (s.pos <= 0) { s.pos = 0; s.dir = 1; s.sweeps++; }
-      this.hud.accuracy({ pos: s.pos, hit: null });
-      if (s.sweeps >= 4) this.strike(); // never pressed: take it where it is
+      this.hud.accuracy({ pos: s.pos, hit: null }); // no timeout: it keeps going until STRIKE is pressed
     }
     this.golfer.update(dt);
     this.updateAddressCam(dt);
@@ -824,7 +872,8 @@ class Game {
     }
     this.state = 'settle'; this.settleT = 0;
     const dist = Math.hypot(b.pos.x - this.shotStart.x, b.pos.z - this.shotStart.z);
-    if (b.mode === 'water') { this.audio.splash(); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
+    if (b.mode === 'water' && this.course.voidLevel != null) { this.hud.message('Lost in the void — one-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
+    else if (b.mode === 'water') { this.audio.splash(); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
     else if (b.mode === 'oob') { this.hud.message('Out of bounds — penalty, replay', 2600, 'bad'); this.penalty = 'oob'; }
     else {
       this.penalty = null;

@@ -192,10 +192,13 @@ export function buildVegetation(course, tex, quality = {}) {
   for (let i = 0; i < (L.pond && !sc ? 12 : 0); i++) { const a = rnd() * Math.PI * 2; const x = L.pond.x + Math.cos(a) * (L.pond.rx + 8 + rnd() * 10), z = L.pond.z + Math.sin(a) * (L.pond.rz + 8 + rnd() * 10); if (okSpot(x, z, 24)) addTree(x, z, false); }
   for (let i = 0; i < (sc ? 0 : 10); i++) { const a = rnd() * Math.PI * 2; const x = L.green.x + Math.cos(a) * (32 + rnd() * 14), z = L.green.z + Math.sin(a) * (30 + rnd() * 14); if (okSpot(x, z, 25)) addTree(x, z, rnd() < 0.5); }
 
+  // ---- Canopy occlusion: soft dark discs under every crown, sampled by the terrain shader ----
+  const ao = paintCanopyOcclusion(specs, L.size);
+
   // ---- Trunks ----
-  const trunkGeo = new THREE.CylinderGeometry(0.55, 1, 1, 8, 1);
+  const trunkGeo = new THREE.CylinderGeometry(0.55, 1, 1, 10, 1);
   trunkGeo.translate(0, 0.5, 0);
-  const trunkMat = new THREE.MeshStandardMaterial({ map: tex.bark, roughness: 0.95 });
+  const trunkMat = new THREE.MeshStandardMaterial({ map: tex.bark, roughness: 0.96, color: 0xcfc8be });
   const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, specs.length);
   trunks.castShadow = true; trunks.receiveShadow = true;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pv = new THREE.Vector3();
@@ -216,30 +219,44 @@ export function buildVegetation(course, tex, quality = {}) {
     const mesh = new THREE.InstancedMesh(cardGeo, mat, count);
     mesh.castShadow = true; mesh.receiveShadow = true;
     mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.45 });
-    const color = new THREE.Color();
+    const color = new THREE.Color(), tintC = new THREE.Color();
+    const Z = new THREE.Vector3(0, 0, 1), outward = new THREE.Vector3(), roll = new THREE.Quaternion();
     let i = 0;
     for (const t of list) {
       const n = nCards(t, conifer);
+      // Every tree gets its own colour: a warm yellow-green, a cool blue-green or anything between.
+      const warm = t.warm != null ? t.warm : rnd();
+      tintC.setRGB((0.80 + 0.28 * warm) * t.tint, (0.98 + 0.03 * warm) * t.tint, (0.94 - 0.30 * warm) * t.tint);
       for (let k = 0; k < n; k++) {
-        let px, py, pz, size;
+        let px, py, pz, size, hf;
         if (conifer) {
           const u = k / n; // 0 bottom .. 1 top
           const yy = t.h * 0.3 + u * t.h * 0.7;
           const rr = t.canopyR * (1 - u * 0.92) * (0.6 + rnd() * 0.55);
           const a = rnd() * Math.PI * 2;
-          px = Math.cos(a) * rr; pz = Math.sin(a) * rr; py = yy;
+          px = Math.cos(a) * rr; pz = Math.sin(a) * rr; py = yy; hf = u;
           size = 1.4 + t.canopyR * 0.7 * (1 - u * 0.5) + rnd() * 0.8;
         } else {
-          const a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1), rr = t.canopyR * Math.cbrt(rnd()) * 0.95;
+          // bias toward the shell of the crown so the silhouette is full and the interior is not wasted
+          const a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1), rr = t.canopyR * Math.pow(rnd(), 0.42) * 0.95;
           px = Math.sin(b) * Math.cos(a) * rr; pz = Math.sin(b) * Math.sin(a) * rr; py = t.canopyY + Math.cos(b) * rr * 0.8;
-          size = t.canopyR * (0.55 + rnd() * 0.45);
+          hf = 0.5 + Math.cos(b) * rr * 0.8 / (2 * t.canopyRy);
+          size = t.canopyR * (0.6 + rnd() * 0.5);
         }
-        const e = new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI);
-        if (conifer) e.set(-0.9 + rnd() * 0.5, Math.atan2(px, pz) + (rnd() - 0.5), (rnd() - 0.5) * 0.4);
-        m.compose(pv.set(t.x + px, t.y + py, t.z + pz), q.setFromEuler(e), s.set(size, size, 1));
+        if (conifer) {
+          q.setFromEuler(new THREE.Euler(-0.9 + rnd() * 0.5, Math.atan2(px, pz) + (rnd() - 0.5), (rnd() - 0.5) * 0.4));
+        } else if (rnd() < 0.7) {
+          // face outward from the crown centre (with jitter) so the sunny side lights up and the far side falls dark
+          outward.set(px + (rnd() - 0.5) * t.canopyR * 0.8, (py - t.canopyY) * 0.7 + (rnd() - 0.5) * t.canopyR * 0.6, pz + (rnd() - 0.5) * t.canopyR * 0.8).normalize();
+          q.setFromUnitVectors(Z, outward).multiply(roll.setFromAxisAngle(Z, rnd() * Math.PI * 2));
+        } else {
+          q.setFromEuler(new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI));
+        }
+        m.compose(pv.set(t.x + px, t.y + py, t.z + pz), q, s.set(size, size, 1));
         mesh.setMatrixAt(i, m);
-        const shade = (0.75 + 0.35 * (py / t.h)) * t.tint * (0.85 + rnd() * 0.3);
-        color.setRGB(shade, shade, shade);
+        // darker low in the crown, brighter on top, with per-card scatter
+        const shade = (0.62 + 0.48 * Math.min(1, Math.max(0, hf))) * (0.86 + rnd() * 0.28);
+        color.copy(tintC).multiplyScalar(shade);
         mesh.setColorAt(i, color);
         i++;
       }
@@ -290,16 +307,43 @@ export function buildVegetation(course, tex, quality = {}) {
   const col = new THREE.Color();
   tuftSpots.forEach((t, i) => {
     const y = course.heightAt(t.x, t.z) - 0.02;
-    const sc = t.reed ? 0.45 + rnd() * 0.35 : 0.35 + rnd() * 0.35;
-    const hgt = t.reed ? 1.0 + rnd() * 0.7 : 0.28 + rnd() * 0.3;
+    const sc = t.reed ? 0.45 + rnd() * 0.35 : 0.4 + rnd() * 0.4;
+    const hgt = t.reed ? 1.0 + rnd() * 0.7 : 0.3 + rnd() * 0.32;
     m.compose(pv.set(t.x, y, t.z), q.setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.25, rnd() * Math.PI, (rnd() - 0.5) * 0.25)), s.set(sc, hgt, sc));
     tufts.setMatrixAt(i, m);
-    if (t.reed) col.setRGB(0.75 + rnd() * 0.2, 0.62 + rnd() * 0.15, 0.35); else { const v = 0.75 + rnd() * 0.45; col.setRGB(v * (0.95 + rnd() * 0.2), v, v * 0.7); }
+    // tufts sit in the rough's own colour range rather than glowing above it
+    if (t.reed) col.setRGB(0.72 + rnd() * 0.2, 0.60 + rnd() * 0.15, 0.34); else { const v = 0.55 + rnd() * 0.4; col.setRGB(v * (0.88 + rnd() * 0.18), v, v * 0.6); }
     tufts.setColorAt(i, col);
   });
   group.add(tufts);
 
-  return { group, field, count: specs.length, tufts: tuftSpots.length };
+  return { group, field, count: specs.length, tufts: tuftSpots.length, ao };
+}
+
+/**
+ * Soft occlusion discs under each crown, painted in world space. The terrain shader multiplies
+ * this in so trees sit on the ground everywhere, not only inside the live shadow map's range.
+ * Returns null where there is no DOM (the node tools).
+ */
+function paintCanopyOcclusion(specs, size, res = 1024) {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas'); c.width = res; c.height = res;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, res, res);
+  const k = res / size;
+  for (const t of specs) {
+    if (t.noCards) continue;
+    const r = Math.max(0.6, t.canopyR * (t.conifer ? 0.95 : 1.08)) * k;
+    const cx = (t.x / size + 0.5) * res, cy = (t.z / size + 0.5) * res;
+    const a = Math.min(0.85, 0.35 + t.density * 0.7);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(0.55, `rgba(255,255,255,${a * 0.55})`); g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; tex.flipY = false;
+  tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+  return tex;
 }
 
 function mergeGeos(geos) {

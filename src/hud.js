@@ -5,6 +5,17 @@ const COURSE_TITLE = COURSE_NAME;
 const YD = 1.09361;
 export const yards = (m) => Math.round(m * YD);
 
+/** Accuracy bands as a fraction of half the bar: gold is flush (100%), green 90-99, amber, red. */
+export const ACC_BANDS = { gold: 0.12, green: 0.3, amber: 0.6 };
+export function accBand(a) {
+  a = Math.abs(a);
+  const B = ACC_BANDS;
+  if (a <= B.gold) return { name: 'gold', pct: 100 };
+  if (a <= B.green) return { name: 'green', pct: Math.round(99 - 9 * (a - B.gold) / (B.green - B.gold)) };
+  if (a <= B.amber) return { name: 'amber', pct: Math.round(89 - 19 * (a - B.green) / (B.amber - B.green)) };
+  return { name: 'red', pct: Math.round(69 - 69 * (a - B.amber) / (1 - B.amber)) };
+}
+
 export class Hud {
   constructor(course) {
     this.course = course; this.layout = course.layout;
@@ -61,13 +72,18 @@ export class Hud {
     this.mm = { x0, x1, z0, z1 };
     const off = document.createElement('canvas'); off.width = 170; off.height = 230;
     const ctx = off.getContext('2d'), img = ctx.createImageData(170, 230), d = img.data;
+    const space = !!L.space;
+    // rough, fairway, green, sand, water/void
+    const P = space
+      ? [[30, 34, 30], [80, 150, 120], [130, 210, 170], [170, 165, 160], [6, 7, 12]]
+      : [[46, 82, 38], [88, 150, 60], [140, 205, 90], [214, 196, 140], [40, 95, 150]];
     for (let py = 0; py < 230; py++) for (let px = 0; px < 170; px++) {
       const x = this.mm.x1 - (px / 170) * (this.mm.x1 - this.mm.x0);
       const z = this.mm.z1 - (py / 230) * (this.mm.z1 - this.mm.z0);
       const i = Math.min(M - 1, Math.max(0, ((x + half) / c.size * M) | 0)), j = Math.min(M - 1, Math.max(0, ((z + half) / c.size * M) | 0));
       const k = (j * M + i) * 4, m = c.mask;
       const f = m[k] / 255, g = m[k + 1] / 255, s = m[k + 2] / 255, w = m[k + 3] / 255, r = Math.max(0, 1 - f - g - s - w);
-      const col = [r * 46 + f * 88 + g * 140 + s * 214 + w * 40, r * 82 + f * 150 + g * 205 + s * 196 + w * 95, r * 38 + f * 60 + g * 90 + s * 140 + w * 150];
+      const col = [0, 1, 2].map((ch) => r * P[0][ch] + f * P[1][ch] + g * P[2][ch] + s * P[3][ch] + w * P[4][ch]);
       const o = (py * 170 + px) * 4; d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 235;
     }
     ctx.putImageData(img, 0, 0);
@@ -112,13 +128,14 @@ export class Hud {
   }
   showMeter(show) { this.el.meter.style.opacity = show ? 1 : 0; }
   showAccuracy(show) { this.el.abar.style.opacity = show ? 1 : 0; }
-  /** pos 0..1 across the bar (0.5 = centre); hit = where it was stopped (null while moving); good = in the green. */
-  accuracy({ pos, hit, good }) {
+  /** pos 0..1 across the bar (0.5 = centre); hit = where it was stopped (null while moving). */
+  accuracy({ pos, hit }) {
     const v = hit == null ? pos : hit;
     const pct = `${(v * 100).toFixed(1)}%`;
     this.el.amark.style.left = pct; this.el.atri.style.left = pct;
-    this.el.apct.textContent = `${Math.round(100 - Math.abs(v - 0.5) * 200)}%`;
-    this.el.abar.className = 'abar' + (hit == null ? '' : good ? ' good' : ' bad');
+    const band = accBand((v - 0.5) * 2);
+    this.el.apct.textContent = `${band.name.toUpperCase()} · ${band.pct}%`;
+    this.el.abar.className = 'abar band-' + band.name + (hit == null ? '' : ' hit');
   }
   /** power 0..1 fill, marker 0..1 position (null hides), set = chosen power line. */
   meter({ label, fill, marker, set, pct }) {
