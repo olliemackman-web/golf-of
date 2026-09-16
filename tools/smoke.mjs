@@ -1,7 +1,7 @@
 // Boots the real game in headless Chromium and fails on any page error.
 // `npm run test:browser`. Needs `npx playwright install chromium` once on a machine
 // that has not got a Playwright browser already. Set SMOKE_SHOT=out.png to save a screenshot.
-/* global window, document */
+/* global window, document, WheelEvent */
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,6 +69,24 @@ try {
   if (acc.later !== 'acc') errors.push(`accuracy bar did not wait for the strike (phase ${acc.later} after 12s)`);
   if (acc.final === 'swing' || acc.final === 'aim') errors.push(`strike did not send the putt (state ${acc.final})`);
   console.log(`putting: drag kept aim (pace ${before.power.toFixed(2)} -> ${after.power.toFixed(2)}), PUTT opened the accuracy bar, it waited 12s, strike -> "${acc.final}"`);
+
+  // Aim zoom: the wheel narrows the field of view, the ZOOM button cycles presets, and a drag turns the aim less when zoomed.
+  const zoom = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.step(0.2);
+    const fov0 = g.camera.fov;
+    g.canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, bubbles: true }));
+    const wheel = { zoom: g.aimZoom, fov: g.camera.fov };
+    g.setAimZoom(1); document.getElementById('btnZoom').click(); const btn = { zoom: g.aimZoom, label: document.getElementById('btnZoom').textContent };
+    return { fov0, wheel, btn };
+  });
+  if (!(zoom.wheel.zoom > 1.5 && Math.abs(zoom.wheel.fov - zoom.fov0 / zoom.wheel.zoom) < 0.01)) errors.push(`wheel zoom did not narrow the view: ${JSON.stringify(zoom)}`);
+  if (!(zoom.btn.zoom > 1 && zoom.btn.label.endsWith('×'))) errors.push(`zoom button did not cycle: ${JSON.stringify(zoom.btn)}`);
+  const turn = async () => { const y0 = await page.evaluate(() => window.__game.aimYaw); await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(cx + 120, cy, { steps: 4 }); await page.mouse.up(); return Math.abs(await page.evaluate(() => window.__game.aimYaw) - y0); };
+  await page.evaluate(() => window.__game.setAimZoom(1)); const turn1 = await turn();
+  await page.evaluate(() => window.__game.setAimZoom(4)); const turn4 = await turn();
+  await page.evaluate(() => window.__game.setAimZoom(1));
+  if (!(turn1 > 0 && turn4 < turn1 * 0.35)) errors.push(`aim drag did not get finer when zoomed (${turn1.toFixed(4)} vs ${turn4.toFixed(4)} rad)`);
+  console.log(`aim zoom: wheel -> ${zoom.wheel.zoom.toFixed(2)}× (fov ${zoom.fov0} -> ${zoom.wheel.fov.toFixed(1)}), button -> ${zoom.btn.label}, drag turn ${turn1.toFixed(3)} rad at 1× vs ${turn4.toFixed(3)} at 4×`);
 
   // Full shot: ball cam takes over on launch, and the accuracy label reads as a band.
   const full = await page.evaluate(() => {

@@ -35,13 +35,14 @@ export class Hud {
         <button class="cbtn" id="btnShop" title="Pro shop (U)">SHOP</button>
         <button class="cbtn" id="btnSpin" title="Ball spin (B)">SPIN</button>
         <button class="cbtn" id="btnView" title="Aim view (V)">VIEW</button>
+        <button class="cbtn" id="btnZoom" title="Zoom the aim view (wheel, pinch, Z / X)">1×</button>
         <button class="cbtn" id="btnCam" title="Ball camera (C)">CAM</button>
         <button class="cbtn" id="btnPrev" title="Previous club (Q)">◀</button>
         <button class="cbtn" id="btnNext" title="Next club (E)">▶</button>
         <button class="cbtn big" id="btnSwing">SWING</button>
       </div>`;
     this.el = {};
-    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
+    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
@@ -105,14 +106,15 @@ export class Hud {
   /** Wire the on-screen controls. handlers: {swing, view, cam, prev, next, target(pct)} */
   bindControls(h) {
     const tap = (el, fn) => { el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); }); el.addEventListener('click', (e) => { e.preventDefault(); fn(); }); };
-    tap(this.el.btnSwing, h.swing); tap(this.el.btnView, h.view); tap(this.el.btnShop, h.shop); tap(this.el.btnSpin, h.spin); tap(this.el.btnCam, h.cam); tap(this.el.btnPrev, h.prev); tap(this.el.btnNext, h.next);
+    tap(this.el.btnSwing, h.swing); tap(this.el.btnView, h.view); tap(this.el.btnShop, h.shop); tap(this.el.btnSpin, h.spin); tap(this.el.btnCam, h.cam); tap(this.el.btnPrev, h.prev); tap(this.el.btnNext, h.next); tap(this.el.btnZoom, h.zoom);
     this.el.tpow.addEventListener('input', () => h.target(parseInt(this.el.tpow.value, 10) / 100));
     this.el.tpow.addEventListener('pointerdown', (e) => e.stopPropagation());
   }
   setSwingLabel(text) { this.el.btnSwing.textContent = text; this.el.btnSwing.style.visibility = text ? 'visible' : 'hidden'; }
   setCoins(n) { this.el.coins.textContent = `◎ ${n}`; }
   setSpinLabel(t) { this.el.btnSpin.textContent = t; this.el.btnSpin.classList.toggle('active', t !== 'SPIN'); }
-  setAimControls(show) { this.el.btnShop.style.display = show ? '' : 'none'; this.el.btnSpin.style.display = show ? '' : 'none'; this.el.btnView.style.display = show ? '' : 'none'; this.el.btnPrev.style.display = show ? '' : 'none'; this.el.btnNext.style.display = show ? '' : 'none'; this.el.target.style.display = show ? '' : 'none'; }
+  setAimControls(show) { for (const k of ['btnShop', 'btnSpin', 'btnView', 'btnZoom', 'btnPrev', 'btnNext', 'target']) this.el[k].style.display = show ? '' : 'none'; }
+  setZoomLabel(z) { this.el.btnZoom.textContent = `${z >= 10 ? Math.round(z) : +z.toFixed(1)}×`; this.el.btnZoom.classList.toggle('active', z > 1.01); }
   setTarget(pct, carryM, putter) { this.el.tval.textContent = `${Math.round(pct * 100)}%`; this.el.tcarry.textContent = putter ? `· ${(carryM * 3.28084).toFixed(0)} ft` : `· ${yards(carryM)} yds`; if (parseInt(this.el.tpow.value, 10) !== Math.round(pct * 100)) this.el.tpow.value = Math.round(pct * 100); }
   setHoleYards(m) { this.el.hyds.textContent = `${yards(m)} YDS`; }
   setStroke(n) { this.el.stroke.textContent = n; }
