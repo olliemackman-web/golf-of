@@ -617,6 +617,23 @@ class Game {
     }
   }
 
+  /** Codes the pro shop passes on when the player store does not know them. Returns {msg, close} or null. */
+  redeemCode(code) {
+    if (String(code).trim() !== '2430') return null;
+    if (this.state !== 'aim' && this.state !== 'holed') return { msg: 'Finish the shot first, then redeem.' };
+    this.redoHole();
+    return { msg: 'Hole restarted.', close: true };
+  }
+  /** Play the current hole again from the tee; the rest of the round's card is kept. */
+  redoHole() {
+    if (this.state === 'holed') {
+      this.scores[this.holeIndex] = undefined; // this hole's score comes off the card
+      if (this.profile && this.holeCoins) { this.profile.coins -= this.holeCoins; this.profile.totalCoins -= this.holeCoins; this.profile.holes -= 1; this.store.save(); this.hud.setCoins(this.profile.coins); this.holeCoins = 0; }
+    }
+    this.restart();
+    this.hud.message('Hole restarted · round score kept', 2200);
+  }
+
   restart() {
     if (this.state === 'loading' || this.state === 'title') return;
     this.overlay.classList.add('hidden');
@@ -701,7 +718,7 @@ class Game {
     // the ball flies in the same steady wind the aim preview was computed with (the gusts are only for the flag)
     this.ball.wind.x = this.windBase.x; this.ball.wind.z = this.windBase.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
-    this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
+    this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z }; this.shotAim = this.aimDir();
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
     // every full shot is followed on the ball cam; C flips back to the eyes mid-flight. Putts stay at eye level.
@@ -718,13 +735,15 @@ class Game {
     setWindTime(this.time);
     this.clouds.userData.update(dt);
     if (this.asteroids) this.asteroids.userData.update(dt);
-    const w = this.wind(this.time); // gusting: drives the flag and the dial's flutter, not the ball
-    this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) + Math.PI);
+    const w = this.wind(this.time); // gusting: drives the flag's flutter, not the ball
+    // the flag streams downwind: its cloth runs along local +x, and rotation.y = r maps +x to (cos r, -sin r)
+    this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) - Math.PI / 2);
     if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
     this.ribbonMat.uniforms.uTime.value = this.time;
     const aimDir = this.aimDir();
-    this.hud.setWind(this.windBase.speed, Math.atan2(w.x, w.z) - this.aimYaw + Math.PI);
+    // dial: wind relative to the aim line, + = blowing toward the player's right
+    { const wb = this.windBase; const along = wb.x * aimDir.x + wb.z * aimDir.z, lateral = -wb.x * aimDir.z + wb.z * aimDir.x; this.hud.setWind(wb.speed, Math.atan2(lateral, along)); }
 
     switch (this.state) {
       case 'flyover': this.updateFlyover(dt); break;
@@ -923,7 +942,10 @@ class Game {
       const lie = this.lieId();
       const where = SURF_NAME[lie];
       const dPin = this.distToPin();
-      const txt = this.shotClub.putter ? (dPin < 1.5 ? 'Tap-in' : `Rolled ${(dist * 3.28).toFixed(0)} ft · ${(dPin * 3.28).toFixed(0)} ft left`) : `${yards(dist)} yds · ${where}${dPin < 25 ? ` · ${(dPin * 3.28).toFixed(0)} ft to the pin` : ''}`;
+      // how far the ball finished from the line it was aimed on (+ = right), so the aim can be trusted or not
+      const a = this.shotAim || this.aimDir(); const lat = -(b.pos.x - this.shotStart.x) * a.z + (b.pos.z - this.shotStart.z) * a.x;
+      const lineTxt = Math.abs(lat) < 0.5 ? 'on the line' : `${Math.abs(lat).toFixed(1)} m ${lat > 0 ? 'right' : 'left'} of the line`;
+      const txt = this.shotClub.putter ? (dPin < 1.5 ? 'Tap-in' : `Rolled ${(dist * 3.28).toFixed(0)} ft · ${(dPin * 3.28).toFixed(0)} ft left`) : `${yards(dist)} yds · ${where} · ${lineTxt}${dPin < 25 ? ` · ${(dPin * 3.28).toFixed(0)} ft to the pin` : ''}`;
       this.hud.message(txt, 2800, lie === SURF.SAND || lie === SURF.ROUGH ? '' : 'good');
     }
   }

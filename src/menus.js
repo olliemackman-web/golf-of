@@ -80,7 +80,12 @@ export class Menus {
     const input = this.el.querySelector('#coupon');
     const redeem = () => {
       const r = store.redeem(profile, input.value);
-      if (r == null) { this.el.querySelector('#couponMsg').textContent = 'Unknown code.'; input.select(); return; }
+      if (r == null) {
+        const gr = this.game.redeemCode ? this.game.redeemCode(input.value) : null; // game-level codes (e.g. redo the hole)
+        if (!gr) { this.el.querySelector('#couponMsg').textContent = 'Unknown code.'; input.select(); return; }
+        if (gr.close) { this.close(); return; }
+        this.el.querySelector('#couponMsg').textContent = gr.msg; return;
+      }
       onChange(); this.shop(store, profile, onChange, r);
     };
     this.el.querySelector('#redeem').onclick = redeem;
