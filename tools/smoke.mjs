@@ -70,6 +70,19 @@ try {
   if (acc.final === 'swing' || acc.final === 'aim') errors.push(`strike did not send the putt (state ${acc.final})`);
   console.log(`putting: drag kept aim (pace ${before.power.toFixed(2)} -> ${after.power.toFixed(2)}), PUTT opened the accuracy bar, it waited 12s, strike -> "${acc.final}"`);
 
+  // Course picker leaderboard: a rival's better round shows as the course record, the player's own best alongside.
+  const board = await page.evaluate(() => {
+    const g = window.__game; const me = g.profile;
+    g.store.finishRound(me, 'gosfield', 74, 2);
+    const rival = g.store.create('rival'); g.store.finishRound(rival, 'gosfield', 66, -6);
+    g.showTitle(); document.querySelector(`[data-play="${me.name}"]`).click();
+    const card = [...document.querySelectorAll('.pcard.course')].find((c) => c.textContent.includes('Gosfield'));
+    const text = card ? card.textContent : ''; g.store.remove('rival'); g.overlay.classList.add('hidden'); g.state = 'aim';
+    return { text: text.replace(/\s+/g, ' ') };
+  });
+  if (!/RECORD rival · 66 \(-6\)/.test(board.text) || !/your best 74 \(\+2\)/.test(board.text)) errors.push(`leaderboard wrong: "${board.text}"`);
+  console.log(`leaderboard: ${board.text.slice(board.text.indexOf('RECORD'), board.text.indexOf('RECORD') + 60)}…`);
+
   // Aim zoom: the wheel narrows the field of view, the ZOOM button cycles presets, and a drag turns the aim less when zoomed.
   const zoom = await page.evaluate(() => {
     const g = window.__game; g.newHole(); g.enterAim(); g.step(0.2);

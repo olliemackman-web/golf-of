@@ -262,7 +262,7 @@ class Game {
         this.audio.ensure();
         if (idx === this.courseIndex && this.holeIndex === 0 && this.scores.length === 0) this.startPlay();
         else { this.courseIndex = idx; this.scores = []; this.goToHole(0); }
-      });
+      }, this.store); // the store lets the picker rank every saved player per course
     });
   }
 

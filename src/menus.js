@@ -45,13 +45,22 @@ export class Menus {
     if (!list.length) setTimeout(() => input.focus(), 50);
   }
 
-  /** Course chooser, rendered into the title panel after the player is picked. */
-  coursePicker(container, courses, profile, onPick) {
+  /**
+   * Course chooser, rendered into the title panel after the player is picked. Each card carries the
+   * course record and a top-three leaderboard across every player saved in this browser.
+   */
+  coursePicker(container, courses, profile, onPick, store = null) {
+    const players = store ? store.list() : [profile];
     const cards = courses.map((c, i) => {
       const b = store_best(profile, c.id);
-      return `<div class="pcard"><div class="pmain"><div class="pname">${esc(c.name)}</div><div class="pmeta">18 holes · par ${c.par} · ${c.yards.toLocaleString()} yds${b ? ` · <b class="coin">best ${b.strokes} (${fmtPar(b.toPar)})</b>` : ''}</div><div class="pmeta" style="margin-top:4px">${esc(c.blurb)}</div></div><button class="btn small" data-course="${i}">PLAY</button></div>`;
+      const board = players.map((p) => ({ name: p.name, best: store ? store.bestFor(p, c.id) : store_best(p, c.id) })).filter((e) => e.best)
+        .sort((x, y) => x.best.strokes - y.best.strokes || x.best.toPar - y.best.toPar || x.name.localeCompare(y.name));
+      const rows = board.slice(0, 3).map((e, k) => `<span class="lbrow${e.name === profile.name ? ' me' : ''}"><i>${k + 1}</i>${esc(e.name)} <b>${e.best.strokes}</b> <small>${fmtPar(e.best.toPar)}</small></span>`).join('');
+      const record = board.length ? `<div class="lbrec">RECORD <b>${esc(board[0].name)}</b> · ${board[0].best.strokes} (${fmtPar(board[0].best.toPar)})${board[0].name === profile.name ? ' · yours' : ''}</div>` : '<div class="lbrec dim">NO ROUNDS YET · SET THE RECORD</div>';
+      const yours = b && board[0] && board[0].name !== profile.name ? ` · <b class="coin">your best ${b.strokes} (${fmtPar(b.toPar)})</b>` : '';
+      return `<div class="pcard course"><div class="pmain"><div class="pname">${esc(c.name)}</div><div class="pmeta">18 holes · par ${c.par} · ${c.yards.toLocaleString()} yds${yours}</div><div class="pmeta" style="margin-top:4px">${esc(c.blurb)}</div>${record}<div class="lb">${rows}</div></div><button class="btn small" data-course="${i}">PLAY</button></div>`;
     }).join('');
-    container.innerHTML = `<h1>RIVERBEND</h1><div class="sub">${esc(profile.name.toUpperCase())} · PICK A COURSE</div><div class="plist">${cards}</div>`;
+    container.innerHTML = `<h1>RIVERBEND</h1><div class="sub">${esc(profile.name.toUpperCase())} · PICK A COURSE</div><div class="plist">${cards}</div><div class="pempty">Records count every player saved in this browser.</div>`;
     for (const b of container.querySelectorAll('[data-course]')) b.onclick = () => onPick(parseInt(b.dataset.course, 10));
   }
 
