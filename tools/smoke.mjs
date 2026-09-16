@@ -108,6 +108,18 @@ try {
   if (!(turn1 > 0 && turn4 < turn1 * 0.35)) errors.push(`aim drag did not get finer when zoomed (${turn1.toFixed(4)} vs ${turn4.toFixed(4)} rad)`);
   console.log(`aim zoom: none in behind view; landing view wheel -> ${zoom.wheel.zoom.toFixed(2)}× (fov ${zoom.fov0} -> ${zoom.wheel.fov.toFixed(1)}), button -> ${zoom.btn.label}, drag turn ${turn1.toFixed(3)} rad at 1× vs ${turn4.toFixed(3)} at 4×`);
 
+  // A gold strike at the planned power lands on the previewed spot (same wind, no jitter).
+  const gold = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.aimYaw += 0.04; g.previewDirty = true; g.step(0.3); g.updatePreview();
+    const pe = { x: g.previewEnd.x, z: g.previewEnd.z };
+    g.enterAddress(); g.step(1.2); g.armSwing();
+    const s = g.swing; s.phase = 'acc'; s.pos = 0.5; s.power = g.planPower; g.state = 'swing'; g.strike(); g.step(14);
+    const b = g.ball.pos;
+    return { miss: Math.hypot(b.x - pe.x, b.z - pe.z), dist: Math.hypot(pe.x - g.L.tee.x, pe.z - g.L.tee.z), wind: g.windBase.speed };
+  });
+  if (!(gold.miss < 0.75)) errors.push(`gold strike missed the previewed spot by ${gold.miss.toFixed(2)} m`);
+  console.log(`gold strike: ${gold.miss.toFixed(2)} m from the previewed landing (${gold.dist.toFixed(0)} m shot, wind ${gold.wind.toFixed(1)} m/s)`);
+
   // Full shot: ball cam takes over on launch, and the accuracy label reads as a band.
   const full = await page.evaluate(() => {
     const g = window.__game; g.newHole(); g.enterAim(); g.step(0.2); g.enterAddress(); g.step(1.2); g.action(); g.step(0.5); g.action(); g.step(0.3);

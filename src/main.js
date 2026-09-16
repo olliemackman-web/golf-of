@@ -687,11 +687,12 @@ class Game {
     const lie = this.lieId();
     const params = shotParams(this.club, s.power, acc, lie, this.mods());
     this.ball.captureBonus = this.mods().captureBonus;
-    // tiny natural dispersion
-    const jitter = (this.rnd() - 0.5) * (this.club.putter ? 0.4 : 1.2);
+    // a little natural dispersion on imperfect strikes only: a gold strike flies exactly the previewed line
+    const jitter = (this.rnd() - 0.5) * (this.club.putter ? 0.4 : 1.2) * Math.min(1, Math.abs(acc) / 0.15);
     const yaw = this.aimYaw - (params.dirErr + jitter) * Math.PI / 180; // + = right of the line
     const dir = { x: Math.sin(yaw), z: Math.cos(yaw) };
-    const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
+    // the ball flies in the same steady wind the aim preview was computed with (the gusts are only for the flag)
+    this.ball.wind.x = this.windBase.x; this.ball.wind.z = this.windBase.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.audio.hit(s.power, this.club);
@@ -710,13 +711,13 @@ class Game {
     setWindTime(this.time);
     this.clouds.userData.update(dt);
     if (this.asteroids) this.asteroids.userData.update(dt);
-    const w = this.wind(this.time);
+    const w = this.wind(this.time); // gusting: drives the flag and the dial's flutter, not the ball
     this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) + Math.PI);
     if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
     this.ribbonMat.uniforms.uTime.value = this.time;
     const aimDir = this.aimDir();
-    this.hud.setWind(w.speed, Math.atan2(w.x, w.z) - this.aimYaw + Math.PI);
+    this.hud.setWind(this.windBase.speed, Math.atan2(w.x, w.z) - this.aimYaw + Math.PI);
 
     switch (this.state) {
       case 'flyover': this.updateFlyover(dt); break;
@@ -811,8 +812,7 @@ class Game {
 
   updateFlight(dt) {
     this.flightT += dt;
-    const w = this.wind(this.time); this.ball.wind.x = w.x; this.ball.wind.z = w.z;
-    this.ball.step(Math.min(dt, 0.05));
+    this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
     for (const ev of this.ball.events) {
       if (ev.type === 'bounce') { this.audio.bounce(ev.speed); }
       else if (ev.type === 'tree') { this.audio.tree(); this.hud.message('Off the trees!', 1600, 'bad'); }
