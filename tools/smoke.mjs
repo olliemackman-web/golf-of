@@ -108,6 +108,23 @@ try {
   if (!(turn1 > 0 && turn4 < turn1 * 0.35)) errors.push(`aim drag did not get finer when zoomed (${turn1.toFixed(4)} vs ${turn4.toFixed(4)} rad)`);
   console.log(`aim zoom: none in behind view; landing view wheel -> ${zoom.wheel.zoom.toFixed(2)}× (fov ${zoom.fov0} -> ${zoom.wheel.fov.toFixed(1)}), button -> ${zoom.btn.label}, drag turn ${turn1.toFixed(3)} rad at 1× vs ${turn4.toFixed(3)} at 4×`);
 
+  // Aim camera: a far point on the aim line projects to the horizontal centre of the screen (no toe-in),
+  // in both the behind and overhead views, and the centre tick is showing.
+  const centre = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.aimYaw += 0.3; g.previewDirty = true;
+    const out = {};
+    for (const view of ['behind', 'high']) {
+      g.aimView = view; g.applyAimFov(); for (let i = 0; i < 240; i++) g.update(1 / 60); // let the camera settle
+      const d = g.aimDir(), b = g.ball.pos;
+      const p = g.tmp.a.set(b.x + d.x * 20000, b.y, b.z + d.z * 20000).project(g.camera); // effectively at infinity
+      out[view] = { ndcX: p.x, tick: document.getElementById('aimtick').style.display };
+    }
+    g.aimView = 'behind'; g.applyAimFov();
+    return out;
+  });
+  for (const v of ['behind', 'high']) if (!(Math.abs(centre[v].ndcX) < 0.012 && centre[v].tick !== 'none')) errors.push(`${v} view: far aim point is off centre (ndc x ${centre[v].ndcX.toFixed(4)}, tick ${centre[v].tick})`);
+  console.log(`aim camera: far point on the line at ndc x ${centre.behind.ndcX.toFixed(4)} (behind) / ${centre.high.ndcX.toFixed(4)} (overhead), centre tick shown`);
+
   // A gold strike at the planned power lands on the previewed spot (same wind, no jitter).
   const gold = await page.evaluate(() => {
     const g = window.__game; g.newHole(); g.enterAim(); g.aimYaw += 0.04; g.previewDirty = true; g.step(0.3); g.updatePreview();

@@ -308,7 +308,11 @@ class Game {
   /** Zoom only applies in the landing view; everywhere else the aim camera is at its normal width. */
   zoomActive() { return this.state === 'aim' && this.aimView === 'landing' && !this.club.putter; }
   effectiveZoom() { return this.zoomActive() ? this.aimZoom : 1; }
-  applyAimFov() { this.camera.fov = this.aimBaseFov() / this.effectiveZoom(); this.camera.updateProjectionMatrix(); this.hud.setZoomVisible(this.zoomActive()); }
+  applyAimFov() {
+    this.camera.fov = this.aimBaseFov() / this.effectiveZoom(); this.camera.updateProjectionMatrix();
+    this.hud.setZoomVisible(this.zoomActive());
+    this.hud.setAimTick(this.state === 'aim' && !this.club.putter && this.aimView !== 'landing');
+  }
   /** Zoom the landing view in or out (1× to ZOOM_MAX). Kept between shots, reset on a new hole. */
   setAimZoom(z) {
     if (!this.zoomActive()) return;
@@ -464,10 +468,13 @@ class Game {
     const b = this.ball.pos;
     if (this.club.putter) return this.puttPose(new THREE.Vector3(b.x, b.y, b.z), dir);
     const right = new THREE.Vector3().crossVectors(dir, UP);
+    // The camera stands a little to the right of the line but looks PARALLEL to it (the look point
+    // carries the same sideways offset), so the aim line converges on the centre of the screen and a
+    // target lined up with the centre tick is exactly where the shot is aimed.
     if (this.aimView === 'high') {
       const pos = new THREE.Vector3(b.x, 0, b.z).addScaledVector(dir, -14).addScaledVector(right, 2);
       pos.y = Math.max(b.y + 11, this.course.heightAt(pos.x, pos.z) + 6);
-      const look = new THREE.Vector3(b.x, b.y, b.z).addScaledVector(dir, 55);
+      const look = new THREE.Vector3(b.x, b.y, b.z).addScaledVector(dir, 55).addScaledVector(right, 2);
       return { pos, look };
     }
     if (this.aimView === 'landing' && this.previewEnd) {
@@ -481,7 +488,7 @@ class Game {
     }
     const pos = new THREE.Vector3(b.x, 0, b.z).addScaledVector(dir, -2.7).addScaledVector(right, 0.5);
     pos.y = Math.max(b.y + 1.5, this.course.heightAt(pos.x, pos.z) + 1.55);
-    const look = new THREE.Vector3(b.x, b.y, b.z).addScaledVector(dir, 28).add(new THREE.Vector3(0, 0.6, 0));
+    const look = new THREE.Vector3(b.x, b.y, b.z).addScaledVector(dir, 28).addScaledVector(right, 0.5).add(new THREE.Vector3(0, 0.6, 0));
     return { pos, look };
   }
   syncBallMesh() { this.ballMesh.position.set(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z); }

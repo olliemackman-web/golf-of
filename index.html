@@ -42,6 +42,10 @@
   .hint{position:absolute;left:50%;top:104px;transform:translateX(-50%);font-size:11px;letter-spacing:.12em;opacity:.7;text-align:center;line-height:1.9;white-space:nowrap}
   .hint b{color:#c9ff5b;font-weight:700}
   .camtag{position:absolute;left:50%;top:22px;transform:translateX(-50%);font-size:10px;letter-spacing:.3em;opacity:.55}
+  /* the aim line converges on this tick: a target lined up with it is exactly where the shot goes */
+  .aimtick{position:absolute;left:50%;top:37%;height:13%;width:2px;margin-left:-1px;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(0,0,0,.45),0 0 6px rgba(0,0,0,.5);display:none}
+  .aimtick::before,.aimtick::after{content:"";position:absolute;left:-5px;width:12px;height:2px;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+  .aimtick::before{top:0}.aimtick::after{bottom:0}
   #overlay{position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at center,rgba(6,12,18,.45),rgba(6,12,18,.85));transition:opacity .5s}
   #overlay.hidden{opacity:0;pointer-events:none}
   .panel{text-align:center;max-width:560px;padding:40px 48px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:rgba(8,14,20,.6);backdrop-filter:blur(10px)}
