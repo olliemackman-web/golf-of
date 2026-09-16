@@ -1,5 +1,6 @@
 # Publishes the game as a static site so it can be played on a phone without a local server.
-# One-time setup on GitHub: Settings -> Pages -> Source: "GitHub Actions".
+# The first run enables Pages for the repo (Source: GitHub Actions); if that step is refused,
+# set it once by hand under Settings -> Pages and re-run the workflow.
 name: Deploy to GitHub Pages
 
 on:
@@ -25,6 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
