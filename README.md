@@ -1,6 +1,8 @@
 # Riverbend Golf — first-person golf in the browser
 
-Two 18-hole courses (par 72 each) played from the golfer's eyes: Riverbend, generated from a seed, and Gosfield Lake, hand-transcribed hole by hole from the club's course guide (`GOSFIELD` in `src/courseData.js` — yards, par, doglegs, bunkers, ponds and carries). Pick the course after picking a player; best rounds are kept per course. A hole spec can also carry hand-placed `scenery` (specimen trees, hedge and fence, a decorative lake, where the woods start) — hole 1 at Gosfield is laid out from drone footage of the real hole. Everything on screen is generated
+Three 18-hole courses (par 72 each) played from the golfer's eyes: Riverbend, generated from a seed; Gosfield Lake, hand-transcribed hole by hole from the club's course guide (`GOSFIELD` in `src/courseData.js` — yards, par, doglegs, bunkers, ponds and carries); and Starfall, turf islands floating in deep space (`SPACE`) — small greens, fairway pads you have to carry to, and nothing but void between them. Anything that leaves an island is lost: one-stroke penalty and replay from where it was hit. Pick the course after picking a player; best rounds are kept per course.
+
+Starfall islands are placed on real club carries (a driver island is centred 222 m out) and `npm run check` plays every hole with the simulator, demanding a route that reaches the green in par + 1 where each shot still lands safely when hit 4% heavy or light or 1° off line. Change an island and that check tells you whether the hole is still doable. A hole spec can also carry hand-placed `scenery` (specimen trees, hedge and fence, a decorative lake, where the woods start) — hole 1 at Gosfield is laid out from drone footage of the real hole. Everything on screen is generated
 in code at load time: the terrain and its surface mask, the grass/sand/bark/leaf
 textures, the trees and rough, the golfer rig and clubs, the swing animation,
 and every sound.
@@ -71,5 +73,6 @@ Pick or create a player on the start screen (profiles live in the browser's loca
 - `src/vegetation.js` — instanced trees (trunks + leaf cards), grass tufts, reeds, tree collisions.
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
 - `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.
+- `src/space.js` — Starfall set dressing (the drifting asteroid field); the starfield sky, rock island sides and void live in `terrain.js` behind `uSpace` / `TERRAIN_SPACE`.
 - `src/main.js` — game states, cameras, input, HUD wiring. `window.__game.step(sec)` advances the sim by hand for debugging; `__game.paused = true` stops the loop.
 - `tools/test.mjs` — the `npm run check` suite; `tools/smoke.mjs` — the headless browser boot test.

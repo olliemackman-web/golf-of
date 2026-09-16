@@ -1,7 +1,9 @@
 // Modal menus: profile picker, upgrade shop, spin pad. Plain DOM.
 import { UPGRADES, upgradeCost } from './profile.js';
+import { COURSES } from './courseData.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const courseName = (id) => { const c = COURSES.find((k) => k.id === id); return c ? c.name : id; };
 
 export class Menus {
   constructor(game) { this.game = game; this.el = document.getElementById('modal'); this.open = null; this.el.addEventListener('pointerdown', (e) => e.stopPropagation()); }
@@ -12,7 +14,7 @@ export class Menus {
   profilePicker(container, store, onPick) {
     const list = store.list();
     const card = (p) => {
-      const bests = Object.entries(p.best || {}).map(([k, b]) => `${k === 'riverbend' ? 'Riverbend' : 'Gosfield'} ${b.strokes} (${fmtPar(b.toPar)})`);
+      const bests = Object.entries(p.best || {}).map(([k, b]) => `${courseName(k)} ${b.strokes} (${fmtPar(b.toPar)})`);
       if (!bests.length && p.bestRound != null) bests.push(`Riverbend ${p.bestRound} (${fmtPar(p.bestToPar)})`);
       const best = bests.length ? 'best ' + bests.join(' · ') : 'no round yet';
       const ups = UPGRADES.map((u) => `<span class="pup" title="${esc(u.name)} ${p.upgrades[u.id] || 0}/${u.max}">${esc(u.name.split(' ')[0])} <b>${p.upgrades[u.id] || 0}</b></span>`).join('');

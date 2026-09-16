@@ -111,6 +111,8 @@ export class Ball {
     if (p.y > this.maxHeight) this.maxHeight = p.y;
     if (this.trees && this.trees.collide(this, h)) return;
     if (!this.course.inBounds(p.x, p.z)) { this.mode = 'oob'; this.events.push({ type: 'oob' }); return; }
+    // Starfall: fallen off an island and below the void level, the ball is gone
+    if (this.course.voidLevel != null && p.y < this.course.voidLevel) { this.mode = 'water'; this.events.push({ type: 'water' }); return; }
     const ground = this.course.heightAt(p.x, p.z);
     if (p.y - BALL_R <= ground) this.contact(ground);
   }

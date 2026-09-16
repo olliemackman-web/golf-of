@@ -7,7 +7,8 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
 import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
-import { buildVegetation, setWindTime } from './vegetation.js';
+import { buildVegetation, setWindTime, TreeField } from './vegetation.js';
+import { buildAsteroids } from './space.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
 import { GameAudio } from './audio.js';
@@ -53,8 +54,8 @@ class Game {
 
     await this.frame(); document.getElementById('loading').textContent = 'PAINTING TEXTURES…'; await this.frame();
     this.tex = buildTextures();
-    const { sunDir, envMap } = buildSky(r, scene);
-    this.sunDir = sunDir; this.envMap = envMap;
+    this.skyCtl = buildSky(r, scene);
+    this.sunDir = this.skyCtl.sunDir; this.envMap = this.skyCtl.envMap; this.spaceMode = false;
     this.clouds = buildClouds(this.tex); scene.add(this.clouds);
     this.holeGroup = null; this.scores = []; this.holeIndex = 0; this.courseIndex = 0;
     await this.buildHoleScene(0, (t) => { document.getElementById('loading').textContent = t; });
@@ -66,7 +67,8 @@ class Game {
     const sc = sun.shadow.camera; sc.near = 1; sc.far = 700; sc.left = -sr; sc.right = sr; sc.top = sr; sc.bottom = -sr;
     sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.5; sun.shadow.radius = 2;
     scene.add(sun); scene.add(sun.target);
-    scene.add(new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.5));
+    this.hemi = new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.5); scene.add(this.hemi);
+    if (this.spaceMode) this.applyAtmosphere(true); // the first hole may already be a Starfall hole
 
     // ball
     const bmat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0, clearcoat: 0.8, clearcoatRoughness: 0.2, bumpMap: this.tex.ballBump, bumpScale: 0.0008 });
@@ -166,21 +168,40 @@ class Game {
     progress('SHAPING THE LAND…'); await this.frame();
     this.holeIndex = n;
     this.course = new Course(holeFor(this.courseIndex, n));
+    const space = !!this.L.space;
+    if (space !== this.spaceMode) { this.spaceMode = space; if (this.sun) this.applyAtmosphere(space); }
     const g = this.holeGroup = new THREE.Group(); scene.add(g);
-    progress('LAYING THE TURF…'); await this.frame();
-    const terr = buildTerrain(this.course, this.tex, this.sunDir, { lite: this.isMobile }); this.terrain = terr; g.add(terr.mesh);
+    progress(space ? 'RAISING THE ISLANDS…' : 'LAYING THE TURF…'); await this.frame();
+    const terr = buildTerrain(this.course, this.tex, this.sunDir, { lite: this.isMobile, space }); this.terrain = terr; g.add(terr.mesh);
     this.water = buildWater(this.course, this.tex, this.envMap); if (this.water) g.add(this.water);
-    g.add(buildFarHills(this.course));
+    this.asteroids = null;
+    if (space) { this.asteroids = buildAsteroids(this.course, n); g.add(this.asteroids); } else g.add(buildFarHills(this.course));
     this.holeObj = buildHole(this.course, this.tex); g.add(this.holeObj);
     g.add(buildTeeMarkers(this.course));
-    progress('PLANTING TREES…'); await this.frame();
-    const veg = buildVegetation(this.course, this.tex, this.quality.veg); g.add(veg.group); this.trees = veg.field;
-    if (veg.ao) terr.uniforms.tAO.value = veg.ao;
+    if (space) { this.trees = new TreeField(); }
+    else {
+      progress('PLANTING TREES…'); await this.frame();
+      const veg = buildVegetation(this.course, this.tex, this.quality.veg); g.add(veg.group); this.trees = veg.field;
+      if (veg.ao) terr.uniforms.tAO.value = veg.ao;
+    }
     if (this.ball) { this.ball.course = this.course; this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin; }
     if (this.hud) this.hud.setHole(this.course);
   }
 
   get L() { return this.course.layout; }
+
+  /** Ground height for cameras and markers: never below the water or void level. */
+  groundY(x, z) { return Math.max(this.course.heightAt(x, z), this.course.waterLevel); }
+
+  /** Day on the parkland courses, deep space on Starfall: sky, fog, fill light and clouds. */
+  applyAtmosphere(space) {
+    this.envMap = this.skyCtl.setSpace(space);
+    this.scene.fog.color.set(space ? 0x000000 : HORIZON);
+    this.scene.fog.density = space ? 0.0011 : 0.00054;
+    this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.5;
+    this.sun.color.set(space ? 0xfff6ea : 0xffe7c4); this.sun.intensity = space ? 3.4 : 3.1;
+    if (this.clouds) this.clouds.visible = !space;
+  }
 
   /** Everything the profile's upgrades and the chosen spin change about a shot. */
   mods() {
@@ -242,6 +263,11 @@ class Game {
   }
 
   holeBlurb(L) {
+    if (L.space) {
+      const k = L.space.islands.length;
+      const isl = k === 0 ? 'Nothing between the tee and the green but void' : k === 1 ? 'One island to carry to, then the green' : `${k} islands to pick a route through`;
+      return `Hole ${L.number} · ${L.name} · Par ${L.par} · ${L.yards} yds. ${isl}${L.bunkers.length ? `, ${L.bunkers.length} crater${L.bunkers.length === 1 ? '' : 's'}` : ''}. Miss an island and the ball is gone.`;
+    }
     const bend = L.bendAngle === 0 ? '' : Math.abs(L.bendAngle) < 0.15 ? 'A gentle ' + (L.bendAngle > 0 ? 'left' : 'right') + ' turn' : 'Dogleg ' + (L.bendAngle > 0 ? 'left' : 'right');
     const water = L.pond ? (L.par === 3 ? 'water beside the green' : 'water ' + (L.bendAngle > 0 ? 'right' : 'left') + ' of the fairway') : 'no water';
     const w2 = L.carry ? 'a carry over water' : water;
@@ -256,17 +282,17 @@ class Game {
 
   beginFlyover() {
     this.state = 'flyover'; this.flyT = 0;
-    const L = this.L, sp = L.spline, n = sp.length, pin = new THREE.Vector3(L.pin.x, this.course.heightAt(L.pin.x, L.pin.z), L.pin.z);
+    const L = this.L, sp = L.spline, n = sp.length, pin = new THREE.Vector3(L.pin.x, this.groundY(L.pin.x, L.pin.z), L.pin.z);
     const de = new THREE.Vector3(sp[n - 1][0] - sp[n - 3][0], 0, sp[n - 1][1] - sp[n - 3][1]).normalize();
     const m1 = sp[Math.round((n - 1) * 0.55)], m2 = sp[Math.round((n - 1) * 0.25)];
-    const mid = new THREE.Vector3(m1[0], this.course.heightAt(m1[0], m1[1]), m1[1]);
-    const mid2 = new THREE.Vector3(m2[0], this.course.heightAt(m2[0], m2[1]), m2[1]);
+    const mid = new THREE.Vector3(m1[0], Math.max(this.groundY(m1[0], m1[1]), 0), m1[1]);
+    const mid2 = new THREE.Vector3(m2[0], Math.max(this.groundY(m2[0], m2[1]), 0), m2[1]);
     const aim = this.aimPose();
     const A = pin.clone().addScaledVector(de, 55).add(new THREE.Vector3(0, 34, 0));
     const B = mid.clone().add(new THREE.Vector3(-45, 42, 0));
     const C = mid2.clone().add(new THREE.Vector3(-25, 26, -20));
     this.flyPath = new THREE.CatmullRomCurve3([A, B, C, aim.pos.clone().add(new THREE.Vector3(0, 6, -8)), aim.pos.clone()], false, 'centripetal');
-    const tee = new THREE.Vector3(L.tee.x, this.course.heightAt(L.tee.x, L.tee.z), L.tee.z);
+    const tee = new THREE.Vector3(L.tee.x, this.groundY(L.tee.x, L.tee.z), L.tee.z);
     this.flyLook = new THREE.CatmullRomCurve3([pin.clone(), pin.clone(), mid.clone(), mid2.clone().add(new THREE.Vector3(0, 0, -20)), tee.clone().add(new THREE.Vector3(0, 0, 40)), aim.look.clone()], false, 'centripetal');
     this.flyDur = L.par === 3 ? 6 : 8;
     this.hud.message(`Hole ${L.number}${L.name ? ' · ' + L.name : ''} · Par ${L.par} · ${L.yards} yds`, 3500, 'good');
@@ -427,11 +453,11 @@ class Game {
       return { pos, look };
     }
     if (this.aimView === 'landing' && this.previewEnd) {
-      const e = this.previewEnd; const ey = this.course.heightAt(e.x, e.z);
+      const e = this.previewEnd; const ey = this.groundY(e.x, e.z);
       const dist = Math.hypot(e.x - b.x, e.z - b.z);
       const back = clamp(dist * 0.35, 6, 26), up = clamp(dist * 0.3, 5, 24);
       const pos = new THREE.Vector3(e.x, 0, e.z).addScaledVector(dir, -back).addScaledVector(right, back * 0.35);
-      pos.y = Math.max(ey + up, this.course.heightAt(pos.x, pos.z) + 2.5);
+      pos.y = Math.max(ey + up, this.groundY(pos.x, pos.z) + 2.5);
       const look = new THREE.Vector3(e.x, ey, e.z).addScaledVector(dir, 3);
       return { pos, look };
     }
@@ -452,7 +478,7 @@ class Game {
     const n = Math.min(pts.length, 900);
     for (let i = 0; i < n; i++) { arr[i * 3] = pts[i].x; arr[i * 3 + 1] = Math.max(pts[i].y, this.course.heightAt(pts[i].x, pts[i].z)) + 0.06; arr[i * 3 + 2] = pts[i].z; }
     g.setDrawRange(0, n); g.attributes.position.needsUpdate = true;
-    const e = res.end; this.landRing.position.set(e.x, this.course.heightAt(e.x, e.z) + 0.05, e.z);
+    const e = res.end; this.landRing.position.set(e.x, this.groundY(e.x, e.z) + 0.05, e.z);
     const scale = this.club.putter ? 0.25 : 1; this.landRing.scale.set(scale, scale, 1);
     if (this.club.putter) {
       this.previewLine.visible = false;
@@ -634,6 +660,7 @@ class Game {
     this.time += dt;
     setWindTime(this.time);
     this.clouds.userData.update(dt);
+    if (this.asteroids) this.asteroids.userData.update(dt);
     const w = this.wind(this.time);
     this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) + Math.PI);
     if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
@@ -832,7 +859,8 @@ class Game {
     }
     this.state = 'settle'; this.settleT = 0;
     const dist = Math.hypot(b.pos.x - this.shotStart.x, b.pos.z - this.shotStart.z);
-    if (b.mode === 'water') { this.audio.splash(); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
+    if (b.mode === 'water' && this.course.voidLevel != null) { this.hud.message('Lost in the void — one-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
+    else if (b.mode === 'water') { this.audio.splash(); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
     else if (b.mode === 'oob') { this.hud.message('Out of bounds — penalty, replay', 2600, 'bad'); this.penalty = 'oob'; }
     else {
       this.penalty = null;

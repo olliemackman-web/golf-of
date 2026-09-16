@@ -27,7 +27,7 @@ export function buildTextures() {
  * Terrain mesh with the turf splat shader. `lite` (phones) skips the close-range blade layer and
  * the neighbour taps used for the bunker lip, saving about half the texture fetches per pixel.
  */
-export function buildTerrain(course, tex, sunDir = new THREE.Vector3(0.5, 0.7, 0.5), { lite = false } = {}) {
+export function buildTerrain(course, tex, sunDir = new THREE.Vector3(0.5, 0.7, 0.5), { lite = false, space = false } = {}) {
   const N = course.res, size = course.size, half = size / 2, step = course.step;
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(N * N * 3), uv = new Float32Array(N * N * 2);
@@ -69,11 +69,11 @@ export function buildTerrain(course, tex, sunDir = new THREE.Vector3(0.5, 0.7, 0
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos; varying vec3 vWNormal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPos = (modelMatrix * vec4(position, 1.0)).xyz; vWNormal = normalize(mat3(modelMatrix) * normal);');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-varying vec3 vWorldPos;
+varying vec3 vWorldPos; varying vec3 vWNormal;
 uniform sampler2D tMask, tGrass, tSand, tNoise, tAO;
 uniform float uSize; uniform vec2 uStripeDir, uMowDir, uSunXZ;
 float terrainRim; float terrainSand; float terrainWater; float terrainFair; float terrainGreen; float terrainDist;`)
@@ -145,10 +145,27 @@ vec3 mud = vec3(0.20, 0.17, 0.11) * (0.8 + 0.4 * nB.r) * (1.0 - 0.5 * smoothstep
 float gsum = max(1e-4, rough + fairway + green);
 vec3 grass = (roughCol * rough + fairMixed * fairway + greenMixed * green) / gsum;
 grass *= 1.0 - 0.2 * rim; // grass overhanging the bunker lip
+#ifdef TERRAIN_SPACE
+grass *= vec3(0.88, 1.0, 1.04);            // a cooler, alien turf
+sandCol *= vec3(0.74, 0.74, 0.78);         // moon-dust craters
+mud = vec3(0.003, 0.004, 0.008);           // the void floor, as good as black
+#endif
 vec3 splat = grass * (1.0 - sand - water) + sandCol * sand + mud * water;
+#ifdef TERRAIN_SPACE
+// sheer island sides: rock where the ground is steep, fading to black with depth
+float steep = smoothstep(0.3, 0.7, 1.0 - vWNormal.y);
+// sample the rock noise by height as well as position, otherwise it streaks down the walls
+vec2 ruv = vec2((vWorldPos.x + vWorldPos.z) * 0.55 + vWorldPos.x * 0.2, vWorldPos.y);
+vec4 rA = texture2D(tNoise, ruv / 21.0), rB = texture2D(tNoise, ruv / 5.3 + 0.4);
+vec3 rock = vec3(0.21, 0.185, 0.165) * (0.5 + 0.8 * rB.g) * (0.6 + 0.6 * rA.r) * (0.85 + 0.3 * rB.a);
+rock *= 1.0 - 0.35 * smoothstep(0.55, 0.9, rA.b); // dark strata
+rock *= smoothstep(-34.0, 0.5, vWorldPos.y);
+splat = mix(splat, rock, steep);
+#else
 // baked canopy shadow / grounding under the trees, plus a little extra darkening deep in the woods
 float ao = texture2D(tAO, muv).r;
 splat *= 1.0 - 0.52 * ao;
+#endif
 diffuseColor.rgb *= splat;
 terrainRim = rim; terrainSand = sand; terrainWater = water; terrainFair = fairway; terrainGreen = green; terrainDist = camDist;`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
@@ -157,8 +174,10 @@ roughnessFactor = 0.96 * roughW + 0.78 * terrainFair + 0.70 * terrainGreen + 0.8
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
 normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(6.0, 45.0, terrainDist) * 0.92 + terrainSand * 0.6 + terrainGreen * 0.5));`);
   };
-  if (lite) mat.defines = { TERRAIN_LITE: '' };
-  mat.customProgramCacheKey = () => 'terrain-splat-v2' + (lite ? '-lite' : '');
+  mat.defines = {};
+  if (lite) mat.defines.TERRAIN_LITE = '';
+  if (space) mat.defines.TERRAIN_SPACE = '';
+  mat.customProgramCacheKey = () => 'terrain-splat-v2' + (lite ? '-lite' : '') + (space ? '-space' : '');
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true; mesh.castShadow = false;
   mesh.name = 'terrain';
@@ -256,6 +275,7 @@ export function buildSky(renderer, scene) {
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: {
       uSun: { value: sunDir.clone() },
+      uSpace: { value: 0 },
       uZenith: { value: new THREE.Color(0.09, 0.22, 0.58) },
       uMid: { value: new THREE.Color(0.30, 0.50, 0.86) },
       uHorizon: { value: HORIZON.clone() },
@@ -264,20 +284,59 @@ export function buildSky(renderer, scene) {
     },
     vertexShader: `varying vec3 vDir;
       void main() { vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }`,
-    fragmentShader: `uniform vec3 uSun, uZenith, uMid, uHorizon, uWarm, uSunCol; varying vec3 vDir;
+    fragmentShader: `uniform vec3 uSun, uZenith, uMid, uHorizon, uWarm, uSunCol; uniform float uSpace; varying vec3 vDir;
+      vec3 hash3(vec3 p) { p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
+      // one layer of jittered point stars on a cubic grid over the direction sphere
+      vec3 stars(vec3 d, float cells, float size, float gain) {
+        vec3 sp = d * cells; vec3 cell = floor(sp); vec3 h = hash3(cell);
+        vec3 star = cell + 0.22 + h * 0.56;
+        float br = pow(fract(h.x * 57.3 + h.y * 13.7), 5.0);
+        float pt = smoothstep(size * (0.5 + br), 0.0, length(sp - star));
+        return pt * gain * (0.35 + 2.4 * br) * mix(vec3(1.0, 0.95, 0.88), vec3(0.78, 0.86, 1.0), h.z);
+      }
+      vec3 spaceSky(vec3 d) {
+        vec3 col = vec3(0.003, 0.004, 0.010);
+        vec3 bandN = normalize(vec3(0.35, 0.75, -0.55));
+        float band = exp(-pow(dot(d, bandN), 2.0) * 16.0);
+        float wisps = 0.55 + 0.45 * sin(d.x * 11.0 + d.z * 7.0 + sin(d.y * 9.0) * 2.0);
+        col += band * wisps * vec3(0.05, 0.06, 0.11);
+        col += stars(d, 90.0, 0.22, 1.0);
+        col += stars(d + 3.1, 170.0, 0.2, 0.55 + band * 1.2);
+        // a ringed blue world low in the sky opposite the sun
+        vec3 pdir = normalize(vec3(-uSun.x, 0.24, -uSun.z));
+        float pd = dot(d, pdir);
+        float R = 0.0949; // sin of the disc's angular radius
+        vec3 t2 = (d - pdir * pd) / R;
+        float t2l = dot(t2, t2);
+        if (pd > 0.0 && t2l < 1.0) {
+          vec3 nrm = normalize(t2 + pdir * sqrt(1.0 - t2l));
+          float lit = max(0.0, dot(nrm, uSun));
+          float bands = 0.5 + 0.5 * sin(nrm.y * 22.0 + sin(nrm.x * 9.0));
+          vec3 pcol = mix(vec3(0.10, 0.24, 0.50), vec3(0.55, 0.72, 0.88), bands * 0.6);
+          col = pcol * (0.06 + 1.1 * lit) + vec3(0.25, 0.45, 0.9) * pow(1.0 - sqrt(1.0 - t2l), 2.0) * 0.5;
+        } else if (pd > 0.0) {
+          col += vec3(0.25, 0.45, 0.9) * exp(-(sqrt(t2l) - 1.0) * 14.0) * 0.35;
+        }
+        float sd = max(0.0, dot(d, uSun));
+        col += vec3(1.0, 0.98, 0.94) * (pow(sd, 1400.0) * 9.0 + pow(sd, 90.0) * 0.4);
+        return col;
+      }
       void main() {
         vec3 d = normalize(vDir);
-        float y = d.y;
-        float h = pow(clamp(y, 0.0, 1.0), 0.5);
-        vec3 col = mix(uHorizon, uMid, smoothstep(0.0, 0.42, h));
-        col = mix(col, uZenith, smoothstep(0.35, 1.0, h));
-        float sd = max(0.0, dot(d, uSun));
-        // warm haze toward the sun, strongest low in the sky
-        col = mix(col, uWarm, pow(sd, 3.0) * 0.4 * (1.0 - h * 0.7));
-        col += uSunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 40.0) * 0.5 + pow(sd, 6.0) * 0.12);
-        // below the horizon: a slightly darker haze so the sky never shows through gaps
-        col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.08, y));
-        gl_FragColor = vec4(col, 1.0);
+        if (uSpace > 0.5) { gl_FragColor = vec4(spaceSky(d), 1.0); }
+        else {
+          float y = d.y;
+          float h = pow(clamp(y, 0.0, 1.0), 0.5);
+          vec3 col = mix(uHorizon, uMid, smoothstep(0.0, 0.42, h));
+          col = mix(col, uZenith, smoothstep(0.35, 1.0, h));
+          float sd = max(0.0, dot(d, uSun));
+          // warm haze toward the sun, strongest low in the sky
+          col = mix(col, uWarm, pow(sd, 3.0) * 0.4 * (1.0 - h * 0.7));
+          col += uSunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 40.0) * 0.5 + pow(sd, 6.0) * 0.12);
+          // below the horizon: a slightly darker haze so the sky never shows through gaps
+          col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.08, y));
+          gl_FragColor = vec4(col, 1.0);
+        }
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
@@ -285,13 +344,19 @@ export function buildSky(renderer, scene) {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 48, 24), mat);
   sky.frustumCulled = false; sky.renderOrder = -10;
   scene.add(sky);
-  const pmrem = new THREE.PMREMGenerator(renderer);
   const skyScene = new THREE.Scene(); skyScene.add(new THREE.Mesh(sky.geometry, mat));
-  const envMap = pmrem.fromScene(skyScene, 0.04).texture;
+  const bake = () => { const pmrem = new THREE.PMREMGenerator(renderer); const env = pmrem.fromScene(skyScene, 0.04).texture; pmrem.dispose(); return env; };
+  let envMap = bake();
   scene.environment = envMap;
   scene.environmentIntensity = 0.42;
-  pmrem.dispose();
-  return { sky, sunDir, envMap };
+  /** Switch between the daytime dome and deep space; re-bakes the environment map and returns it. */
+  const setSpace = (on) => {
+    mat.uniforms.uSpace.value = on ? 1 : 0;
+    if (envMap) envMap.dispose();
+    envMap = bake(); scene.environment = envMap;
+    return envMap;
+  };
+  return { sky, sunDir, envMap, setSpace };
 }
 
 export function buildClouds(tex) {

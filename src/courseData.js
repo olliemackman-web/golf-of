@@ -93,10 +93,88 @@ const GOSFIELD = [
   { name: 'Paddock Pond', par: 5, yards: 536, bend: { at: 0.7, deg: -12 }, pond: { at: 0.6, side: 'C', rx: 22, rz: 24 }, bunkers: [{ at: 0.44, side: 'L', rx: 9, rz: 5.5 }], green: { rx: 18, rz: 15 } },
 ];
 
+// ---- Starfall: turf islands floating in space ----
+// Every hole is a chain of islands with nothing but void between them. `islands` are fairway
+// pads: `at` is metres from the tee along the line, `off` metres left (+) or right (-) of it,
+// rx across / rz along in metres. The tee pad and the green (with a 3 m apron) are islands too.
+// Greens are small. Anything that leaves an island is lost and replayed with a penalty.
+// Full carries in metres for reference (flat lie, no spin): DR 207 (+25 roll), 3W 196 (+21),
+// 4H 180 (+19), 5I 169 (+17), 7I 151 (+12), 9I 127 (+8), PW 111 (+5), SW 81 (+3). The tee pad sits
+// a metre or two above the islands, which adds a few metres. A driver island is centred at 222.
+const SPACE = [
+  { name: 'Launch Pad', par: 4, yards: 340, green: { rx: 9.5, rz: 8.5 },
+    islands: [{ at: 222, rx: 16, rz: 26 }], craters: [{ island: 0, dx: 9, dz: 6, rx: 3.5, rz: 2.5 }] },
+  { name: 'Low Orbit', par: 3, yards: 150, green: { rx: 9, rz: 8 },
+    islands: [{ at: 108, off: -13, rx: 8, rz: 9 }] },
+  { name: 'Kuiper Belt', par: 5, yards: 520, green: { rx: 9, rz: 8.5 }, bend: { at: 0.55, deg: 12 },
+    islands: [{ at: 150, rx: 12, rz: 14 }, { at: 222, rx: 15, rz: 26 }, { at: 350, rx: 13, rz: 22 }], craters: [{ island: 1, dx: -8, dz: -8, rx: 4, rz: 3 }] },
+  { name: 'Solar Wind', par: 4, yards: 380, green: { rx: 9, rz: 8 }, bend: { at: 0.5, deg: -20 },
+    islands: [{ at: 224, off: -6, rx: 14, rz: 26 }] },
+  { name: 'Debris Field', par: 3, yards: 185, green: { rx: 10, rz: 9 },
+    islands: [{ at: 138, off: 10, rx: 9, rz: 10 }] },
+  { name: 'Dark Side', par: 4, yards: 410, green: { rx: 10, rz: 9 },
+    islands: [{ at: 222, rx: 14, rz: 26 }] },
+  { name: 'Perihelion', par: 5, yards: 545, green: { rx: 9.5, rz: 8.5 }, bend: { at: 0.45, deg: 16 },
+    islands: [{ at: 130, rx: 11, rz: 13 }, { at: 222, rx: 14, rz: 26 }, { at: 370, rx: 12, rz: 22 }] },
+  { name: 'Lagrange Point', par: 5, yards: 480, green: { rx: 9, rz: 8 },
+    islands: [{ at: 222, rx: 14, rz: 24 }, { at: 320, off: 8, rx: 12, rz: 18 }, { at: 390, off: -7, rx: 8, rz: 9 }], craters: [{ island: 0, dx: 0, dz: 10, rx: 4, rz: 3 }] },
+  { name: 'Red Shift', par: 3, yards: 210, green: { rx: 10, rz: 9 },
+    islands: [{ at: 160, off: 11, rx: 10, rz: 16 }] },
+  { name: 'Escape Velocity', par: 4, yards: 355, green: { rx: 9, rz: 8 },
+    islands: [{ at: 205, off: 6, rx: 15, rz: 22 }], craters: [{ island: 0, dx: -9, dz: 0, rx: 3.5, rz: 3 }] },
+  { name: 'The Void', par: 5, yards: 560, green: { rx: 9, rz: 8.5 }, bend: { at: 0.6, deg: -14 },
+    islands: [{ at: 222, rx: 13, rz: 26 }, { at: 340, off: -10, rx: 12, rz: 24 }, { at: 430, off: 6, rx: 11, rz: 18 }] },
+  { name: 'Ion Trail', par: 3, yards: 135, green: { rx: 7.5, rz: 7 }, islands: [] },
+  { name: 'Asteroid Alley', par: 4, yards: 395, green: { rx: 9, rz: 8 },
+    islands: [{ at: 222, rx: 11, rz: 30 }] },
+  { name: 'Zero G', par: 4, yards: 330, green: { rx: 9.5, rz: 8.5 },
+    islands: [{ at: 172, rx: 14, rz: 18 }, { at: 232, off: -10, rx: 9, rz: 12 }] },
+  { name: 'Supernova', par: 3, yards: 165, green: { rx: 9, rz: 8 },
+    islands: [{ at: 176, off: 14, rx: 9, rz: 9 }] },
+  { name: 'Wormhole', par: 4, yards: 425, green: { rx: 9, rz: 8.5 }, bend: { at: 0.5, deg: 25 },
+    islands: [{ at: 222, off: 6, rx: 14, rz: 26 }, { at: 290, off: 14, rx: 10, rz: 14 }] },
+  { name: 'Event Horizon', par: 5, yards: 500, green: { rx: 9.5, rz: 8.5 },
+    islands: [{ at: 222, rx: 14, rz: 24 }, { at: 330, rx: 13, rz: 20 }], craters: [{ island: 0, dx: 6, dz: -6, rx: 5, rz: 3.5 }] },
+  { name: 'Splashdown', par: 4, yards: 365, green: { rx: 9, rz: 9 },
+    islands: [{ at: 222, rx: 13, rz: 24 }] },
+];
+
 export const COURSES = [
   { id: 'riverbend', name: 'Riverbend', par: 72, blurb: 'Generated parkland — doglegs, ponds and deep bunkers.', hole: (n) => makeHole(n) },
   { id: 'gosfield', name: 'Gosfield Lake', par: 72, blurb: 'The real Essex 18, hole by hole: Gosfield Hall to Paddock Pond.', hole: (n) => makeHoleFromSpec(GOSFIELD[n], n) },
+  { id: 'starfall', name: 'Starfall', par: 72, blurb: 'Turf islands adrift in deep space. Tiny greens, fairways you have to carry to, and nothing but void between. Hard.', hole: (n) => makeSpaceHole(SPACE[n], n) },
 ];
+
+/** Build a Starfall hole: the usual spline and green, then the island shapes hung off it. */
+export function makeSpaceHole(spec, n) {
+  const L = makeHoleFromSpec({ ...spec, bunkers: [], halfWidth: 14 }, n);
+  L.name = spec.name; L.seed = 90 + n;
+  const rnd = mulberry32(7700 + n * 613);
+  const g = L.green;
+  const shapes = [];
+  // tee pad
+  shapes.push({ x: L.tee.x, z: L.tee.z, rx: L.tee.w / 2 + 4.5, rz: L.tee.l / 2 + 5, rot: 0, h: 3.0, dish: 0.1, kind: 'tee' });
+  // fairway islands, each at its own height with a shallow dish so balls drift back toward the middle
+  const islands = [];
+  for (const s of spec.islands || []) {
+    const p = alongHole(L, (s.at - 14) / L.len, s.off || 0);
+    const I = { x: p.x, z: p.z, rx: s.rx, rz: s.rz, rot: p.dir, h: 1.2 + (rnd() - 0.5) * 2.4, dish: 0.35, kind: 'fairway' };
+    islands.push(I); shapes.push(I);
+  }
+  // green island: the green plus a 6 m fairway apron, dished like a shallow gravity well so a ball
+  // that lands on it tends to gather toward the middle rather than run off the back
+  shapes.push({ x: g.x, z: g.z, rx: g.rx + 6, rz: g.rz + 6, rot: g.rot, h: 1.8 + (rnd() - 0.5) * 1.6, dish: 0.45, kind: 'green' });
+  // craters: bunkers set into the islands
+  L.bunkers = [];
+  for (const c of spec.craters || []) {
+    const I = islands[c.island]; if (!I) continue;
+    const cs = Math.cos(I.rot), sn = Math.sin(I.rot);
+    L.bunkers.push({ x: I.x + c.dx * cs - c.dz * sn, z: I.z + c.dx * sn + c.dz * cs, rx: c.rx, rz: c.rz, rot: I.rot });
+  }
+  L.space = { shapes, islands, voidLevel: -14, floor: -70 };
+  L.pond = null; L.ponds = [];
+  return L;
+}
 export function holeFor(courseIndex, n) { const c = COURSES[courseIndex] || COURSES[0]; const L = c.hole(n); L.courseId = c.id; L.courseName = c.name; L.courseIndex = COURSES.indexOf(c); return L; }
 export function courseYards(courseIndex) { let t = 0; for (let i = 0; i < HOLE_COUNT; i++) t += holeFor(courseIndex, i).yards; return t; }
 
@@ -330,8 +408,50 @@ function terrainHeightBase(L, x, z) {
   return h;
 }
 
+/** Starfall: islands at their own heights with sheer sides, the void floor far below. */
+function spaceHeight(L, x, z) {
+  const n = fbm(x / 11 + 2, z / 11 - 3, 2, 2, 0.5);
+  const small = fbm(x / 7 + 1, z / 7 - 5, 2, 2, 0.5) * 0.12;
+  let mask = 0, hsum = 0, wsum = 0;
+  for (const S of L.space.shapes) {
+    const e = ellipseDist(x, z, S) + n * 0.05;
+    if (e > 1.5) continue;
+    const w = smoothstep(1.32, 1.08, e); // flat out through the rim of rough, then the cliff
+    const inside = Math.min(1, e);
+    const top = S.h - S.dish * (1 - inside * inside) + small;
+    mask = Math.max(mask, w); hsum += w * top; wsum += w;
+  }
+  const top = wsum > 0 ? hsum / wsum : 0;
+  let h = lerp(L.space.floor, top, mask);
+  if (mask > 0.5) for (const b of L.bunkers) {
+    const e = ellipseDist(x, z, b) + fbm(x / 6, z / 6, 2) * 0.08;
+    h -= smoothstep(1.15, 0.75, e) * 0.7;
+  }
+  return h;
+}
+
+/** Starfall surfaces: fairway on the islands, a rim of rough at the cliff edge, void beyond. */
+function spaceWeights(L, x, z) {
+  const n = fbm(x / 11 + 2, z / 11 - 3, 2, 2, 0.5);
+  let fairway = 0, island = 0;
+  for (const S of L.space.shapes) {
+    const e = ellipseDist(x, z, S) + n * 0.05;
+    if (e > 1.3) continue;
+    fairway = Math.max(fairway, smoothstep(1.0, 0.94, e));
+    island = Math.max(island, smoothstep(1.12, 1.06, e));
+  }
+  const eg = ellipseDist(x, z, L.green) + n * 0.03;
+  const green = smoothstep(1.04, 0.97, eg);
+  const tdx = Math.abs(x - L.tee.x) / (L.tee.w / 2), tdz = Math.abs(z - L.tee.z) / (L.tee.l / 2);
+  const tee = smoothstep(1.06, 0.98, Math.max(tdx, tdz));
+  let sand = 0;
+  for (const b of L.bunkers) { const e = ellipseDist(x, z, b) + fbm(x / 6, z / 6, 2) * 0.08; sand = Math.max(sand, smoothstep(1.02, 0.94, e)); }
+  return { fairway, green, sand, water: 1 - island, tee };
+}
+
 /** The terrain height function everything is sampled from. */
 export function terrainHeight(L, x, z) {
+  if (L.space) return spaceHeight(L, x, z);
   const ox = L.seed * 131.7, oz = L.seed * 71.3;
   const big = fbm((x + ox) / 210 + 10, (z + oz) / 210 + 4, 4, 2, 0.5) * 6.5;
   const med = fbm((x + ox) / 55 - 3, (z + oz) / 55 + 7, 3, 2, 0.5) * 1.3;
@@ -372,6 +492,7 @@ export function terrainHeight(L, x, z) {
 
 /** Surface weights [fairway, green, sand, water] in 0..1, plus tee. */
 export function surfaceWeights(L, x, z) {
+  if (L.space) return spaceWeights(L, x, z);
   const n = fbm(x / 16 + 5, z / 16 - 2, 3, 2, 0.5);
   const { d, t } = splineDist(L, x, z);
   let fairway = smoothstep(L.halfWidth + 3, L.halfWidth - 3, d + n * 6) * smoothstep(0.0, 0.03, t);
@@ -391,7 +512,9 @@ export class Course {
   constructor(layout) {
     const L = this.layout = layout;
     this.size = L.size; this.res = L.res; this.maskRes = L.maskRes;
-    this.waterLevel = waterLevel(L);
+    // Starfall: anything that drops below the void level is gone (the ball treats it like water)
+    this.voidLevel = L.space ? L.space.voidLevel : null;
+    this.waterLevel = L.space ? L.space.voidLevel : waterLevel(L);
     this.ponds = ponds(L).map((q) => ({ pond: q, level: pondLevel(L, q) }));
     const N = L.res, half = L.size / 2, step = L.size / (N - 1);
     this.heights = new Float32Array(N * N);
@@ -404,7 +527,8 @@ export class Course {
       const x = -half + (i + 0.5) * mstep, z = -half + (j + 0.5) * mstep;
       const { d } = splineDist(L, x, z);
       const k = (j * M + i) * 4;
-      if (d > 120 && !ponds(L).some((q) => ellipseDist(x, z, q) < 2.5)) continue;
+      if (L.space) { this.mask[k + 3] = 255; if (d > 90) continue; } // void by default; islands paint over it
+      else if (d > 120 && !ponds(L).some((q) => ellipseDist(x, z, q) < 2.5)) continue;
       const s = surfaceWeights(L, x, z);
       const water = s.water, sand = s.sand * (1 - water), green = Math.max(s.green, s.tee) * (1 - water) * (1 - sand);
       const fairway = s.fairway * (1 - water) * (1 - sand) * (1 - green);
@@ -445,6 +569,6 @@ export class Course {
   }
 
   /** Water level of the pond nearest this point (the ball checks it on contact). */
-  waterLevelAt(x, z) { let best = 9, lvl = this.waterLevel; for (const p of this.ponds) { const d = ellipseDist(x, z, p.pond); if (d < best) { best = d; lvl = p.level; } } return lvl; }
+  waterLevelAt(x, z) { if (this.voidLevel != null) return this.voidLevel; let best = 9, lvl = this.waterLevel; for (const p of this.ponds) { const d = ellipseDist(x, z, p.pond); if (d < best) { best = d; lvl = p.level; } } return lvl; }
   inBounds(x, z) { const h = this.size / 2 - 12; return x > -h && x < h && z > -h && z < h; }
 }

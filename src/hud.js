@@ -61,13 +61,18 @@ export class Hud {
     this.mm = { x0, x1, z0, z1 };
     const off = document.createElement('canvas'); off.width = 170; off.height = 230;
     const ctx = off.getContext('2d'), img = ctx.createImageData(170, 230), d = img.data;
+    const space = !!L.space;
+    // rough, fairway, green, sand, water/void
+    const P = space
+      ? [[30, 34, 30], [80, 150, 120], [130, 210, 170], [170, 165, 160], [6, 7, 12]]
+      : [[46, 82, 38], [88, 150, 60], [140, 205, 90], [214, 196, 140], [40, 95, 150]];
     for (let py = 0; py < 230; py++) for (let px = 0; px < 170; px++) {
       const x = this.mm.x1 - (px / 170) * (this.mm.x1 - this.mm.x0);
       const z = this.mm.z1 - (py / 230) * (this.mm.z1 - this.mm.z0);
       const i = Math.min(M - 1, Math.max(0, ((x + half) / c.size * M) | 0)), j = Math.min(M - 1, Math.max(0, ((z + half) / c.size * M) | 0));
       const k = (j * M + i) * 4, m = c.mask;
       const f = m[k] / 255, g = m[k + 1] / 255, s = m[k + 2] / 255, w = m[k + 3] / 255, r = Math.max(0, 1 - f - g - s - w);
-      const col = [r * 46 + f * 88 + g * 140 + s * 214 + w * 40, r * 82 + f * 150 + g * 205 + s * 196 + w * 95, r * 38 + f * 60 + g * 90 + s * 140 + w * 150];
+      const col = [0, 1, 2].map((ch) => r * P[0][ch] + f * P[1][ch] + g * P[2][ch] + s * P[3][ch] + w * P[4][ch]);
       const o = (py * 170 + px) * 4; d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 235;
     }
     ctx.putImageData(img, 0, 0);

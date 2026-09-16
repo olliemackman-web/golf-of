@@ -90,5 +90,63 @@ check('random shots settle without NaNs, timeouts or sinking under ground', () =
   assert(total > 200, `only ${total} shots simulated`);
 });
 
+check('every Starfall hole is doable: a route with margin reaches the green in par + 1', () => {
+  const ci = COURSES.findIndex((c) => c.id === 'starfall');
+  assert(ci >= 0, 'no Starfall course');
+  const flat = { x: 0, z: 0 };
+  const safe = (course, r) => {
+    if (r.mode !== 'rest') return false;
+    const id = course.surfaceAt(r.end.x, r.end.z).id;
+    return id === SURF.FAIRWAY || id === SURF.GREEN || id === SURF.TEE || id === SURF.SAND || id === SURF.ROUGH;
+  };
+  const shoot = (course, pos, club, power, yaw) => {
+    const lie = course.surfaceAt(pos.x, pos.z).id;
+    const p = shotParams(club, power, 0, lie);
+    return simulateShot(course, { x: pos.x, y: course.heightAt(pos.x, pos.z) + BALL_R, z: pos.z }, { x: Math.sin(yaw), z: Math.cos(yaw) }, p, { maxT: 40 });
+  };
+  const report = [];
+  for (let n = 0; n < HOLE_COUNT; n++) {
+    const L = holeFor(ci, n); const course = new Course(L);
+    let pos = { x: L.tee.x, z: L.tee.z }, legs = 0; const route = [];
+    // home = on the green, or resting on the island within 10 m of the pin (a putt from the apron)
+    const home = (p) => course.surfaceAt(p.x, p.z).id === SURF.GREEN || Math.hypot(L.pin.x - p.x, L.pin.z - p.z) < 10;
+    while (legs < L.par + 1 && !home(pos)) {
+      const dPin = Math.hypot(L.pin.x - pos.x, L.pin.z - pos.z);
+      // aim at the pin and at every island centre ahead, a little either side of each
+      const targets = [L.pin, ...L.space.islands.filter((I) => Math.hypot(I.x - pos.x, I.z - pos.z) > 25)];
+      const yaws = [];
+      for (const T of targets) { const a = Math.atan2(T.x - pos.x, T.z - pos.z); yaws.push(a - 0.03, a, a + 0.03); }
+      const cands = [];
+      for (const club of CLUBS) {
+        if (club.putter && dPin > 30) continue;
+        for (let pw = 0.1; pw <= 1.001; pw += 0.025) for (const yaw of yaws) {
+          const r = shoot(course, pos, club, pw, yaw);
+          if (!safe(course, r)) continue;
+          const left = Math.hypot(L.pin.x - r.end.x, L.pin.z - r.end.z);
+          if (left > dPin - 20 && !home(r.end)) continue; // a shot has to make real progress
+          const lieEnd = course.surfaceAt(r.end.x, r.end.z).id;
+          if (!home(r.end) && lieEnd !== SURF.FAIRWAY && lieEnd !== SURF.TEE) continue; // aim for the middle of an island, not its rim or a crater
+          cands.push({ club, pw, yaw, end: r.end, left, onGreen: home(r.end) });
+        }
+      }
+      cands.sort((a, b) => (a.onGreen === b.onGreen ? a.left - b.left : a.onGreen ? -1 : 1));
+      // the shot has to survive being a little heavy, light, pulled or pushed
+      let pick = null;
+      for (const c of cands.slice(0, 200)) {
+        let ok = 0, tot = 0;
+        for (const pm of [0.96, 1, 1.04]) for (const ym of [-0.02, 0, 0.02]) { tot++; if (safe(course, shoot(course, pos, c.club, Math.min(1, c.pw * pm), c.yaw + ym))) ok++; }
+        if (ok / tot >= 0.75) { pick = { ...c, margin: ok / tot }; break; }
+      }
+      assert(pick, `${L.name}: no safe shot from ${dPin.toFixed(0)}m out after ${legs} leg(s) (${cands.length} landings, none with margin)`);
+      route.push(`${pick.club.id}@${Math.round(pick.pw * 100)}%${pick.onGreen ? ' green' : ` ${Math.round(pick.left)}m left`}`);
+      pos = { x: pick.end.x, z: pick.end.z }; legs++;
+    }
+    const line = `  ${String(n + 1).padStart(2)} ${L.name.padEnd(16)} par ${L.par} ${String(L.yards).padStart(3)}y: ${route.join(' → ')}`;
+    console.log(line); report.push(line);
+    assert(home(pos), `${L.name}: not home after ${legs} legs (${route.join(', ')})`);
+  }
+  void flat;
+});
+
 if (failures.length) { console.log(`\n${failures.length} check(s) failed`); process.exit(1); }
 console.log('\nall checks passed');
