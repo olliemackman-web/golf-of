@@ -113,7 +113,8 @@ export class Hud {
   setSwingLabel(text) { this.el.btnSwing.textContent = text; this.el.btnSwing.style.visibility = text ? 'visible' : 'hidden'; }
   setCoins(n) { this.el.coins.textContent = `◎ ${n}`; }
   setSpinLabel(t) { this.el.btnSpin.textContent = t; this.el.btnSpin.classList.toggle('active', t !== 'SPIN'); }
-  setAimControls(show) { for (const k of ['btnShop', 'btnSpin', 'btnView', 'btnZoom', 'btnPrev', 'btnNext', 'target']) this.el[k].style.display = show ? '' : 'none'; }
+  setAimControls(show) { for (const k of ['btnShop', 'btnSpin', 'btnView', 'btnPrev', 'btnNext', 'target']) this.el[k].style.display = show ? '' : 'none'; if (!show) this.el.btnZoom.style.display = 'none'; }
+  setZoomVisible(v) { this.el.btnZoom.style.display = v ? '' : 'none'; }
   setZoomLabel(z) { this.el.btnZoom.textContent = `${z >= 10 ? Math.round(z) : +z.toFixed(1)}×`; this.el.btnZoom.classList.toggle('active', z > 1.01); }
   setTarget(pct, carryM, putter) { this.el.tval.textContent = `${Math.round(pct * 100)}%`; this.el.tcarry.textContent = putter ? `· ${(carryM * 3.28084).toFixed(0)} ft` : `· ${yards(carryM)} yds`; if (parseInt(this.el.tpow.value, 10) !== Math.round(pct * 100)) this.el.tpow.value = Math.round(pct * 100); }
   setHoleYards(m) { this.el.hyds.textContent = `${yards(m)} YDS`; }
