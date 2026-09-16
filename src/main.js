@@ -17,7 +17,8 @@ import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.6, T_ACC_PUTT = 0.75;
+const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.75, T_ACC_PUTT = 0.9;
+import { ACC_BANDS } from './hud.js';
 
 class Game {
   constructor() {
@@ -618,18 +619,28 @@ class Game {
     const s = this.swing;
     if (s.phase !== 'acc') return;
     s.acc = (s.pos - 0.5) * 2; // -1 left .. +1 right of centre
-    this.hud.accuracy({ pos: s.pos, hit: s.pos, good: Math.abs(s.acc) <= 0.2 });
+    this.hud.accuracy({ pos: s.pos, hit: s.pos });
     s.phase = 'down'; s.t = 0;
     this.golfer.beginDownswing(this.club.putter ? T_DOWN_PUTT : T_DOWN, () => this.impact());
     this.hud.setSwingLabel('');
   }
 
+  /**
+   * Miss size from where the marker was stopped, -1..1. Gold is flush; green is a whisper off line;
+   * amber is a visible push or pull with some curve; red is a proper hook or slice. Forgiveness
+   * upgrades soften it; putts are gentler.
+   */
   accuracyValue() {
     const s = this.swing;
     if (s.acc == null) return 0;
-    // inside the green zone counts as flush; beyond it the miss grows, softened by forgiveness
-    const a = Math.abs(s.acc) <= 0.2 ? 0 : (s.acc - Math.sign(s.acc) * 0.2) / 0.8;
-    return clamp(a * this.mods().accScale, -1, 1) * (this.club.putter ? 0.6 : 1);
+    const a = Math.abs(s.acc), sign = Math.sign(s.acc);
+    const B = ACC_BANDS;
+    let m;
+    if (a <= B.gold) m = 0;
+    else if (a <= B.green) m = lerp(0.03, 0.15, (a - B.gold) / (B.green - B.gold));
+    else if (a <= B.amber) m = lerp(0.15, 0.5, (a - B.green) / (B.amber - B.green));
+    else m = lerp(0.5, 1.0, (a - B.amber) / (1 - B.amber));
+    return clamp(sign * m * this.mods().accScale, -1, 1) * (this.club.putter ? 0.6 : 1);
   }
 
   impact() {
@@ -649,6 +660,8 @@ class Game {
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
+    // every full shot is followed on the ball cam; C flips back to the eyes mid-flight. Putts stay at eye level.
+    if (!this.club.putter) { this.camMode = 'chase'; this.chaseDir = null; }
     this.previewLine.visible = false; this.landRing.visible = false; this.puttRibbon.visible = false;
     this.hud.setSwingLabel('');
     this.hud.setHint(this.camMode === 'pov' ? '<b>C</b> ball camera' : '<b>C</b> first-person');

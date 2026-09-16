@@ -252,8 +252,9 @@ export function shotParams(club, power, accuracy, lie, mods = {}) {
   const loft = club.loft + (lie === SURF.ROUGH ? 2 : 0) + (1 - power) * 2;
   const back = club.spin * (0.6 + 0.4 * power) * spinMul;
   const land = spin.y * spinPower * (lie === SURF.ROUGH ? 0.5 : 1);
-  const side = accuracy * (600 + club.speed * 22) * spinMul * (mods.sideMul == null ? 1 : mods.sideMul) + spin.x * spinPower * (900 + club.speed * 10) * spinMul;
-  const dirErr = accuracy * 3 * (mods.sideMul == null ? 1 : mods.sideMul) - spin.x * spinPower * 1.2; // shape starts a touch inside the line
+  // a poor strike both starts off line and curves: at accuracy 1 a driver hooks or slices 40 m+
+  const side = accuracy * (760 + club.speed * 28) * spinMul * (mods.sideMul == null ? 1 : mods.sideMul) + spin.x * spinPower * (900 + club.speed * 10) * spinMul;
+  const dirErr = accuracy * 4.5 * (mods.sideMul == null ? 1 : mods.sideMul) - spin.x * spinPower * 1.2; // shape starts a touch inside the line
   return { speed, loft, back, side, dirErr, land };
 }
 

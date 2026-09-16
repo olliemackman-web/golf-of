@@ -5,6 +5,17 @@ const COURSE_TITLE = COURSE_NAME;
 const YD = 1.09361;
 export const yards = (m) => Math.round(m * YD);
 
+/** Accuracy bands as a fraction of half the bar: gold is flush (100%), green 90-99, amber, red. */
+export const ACC_BANDS = { gold: 0.12, green: 0.3, amber: 0.6 };
+export function accBand(a) {
+  a = Math.abs(a);
+  const B = ACC_BANDS;
+  if (a <= B.gold) return { name: 'gold', pct: 100 };
+  if (a <= B.green) return { name: 'green', pct: Math.round(99 - 9 * (a - B.gold) / (B.green - B.gold)) };
+  if (a <= B.amber) return { name: 'amber', pct: Math.round(89 - 19 * (a - B.green) / (B.amber - B.green)) };
+  return { name: 'red', pct: Math.round(69 - 69 * (a - B.amber) / (1 - B.amber)) };
+}
+
 export class Hud {
   constructor(course) {
     this.course = course; this.layout = course.layout;
@@ -117,13 +128,14 @@ export class Hud {
   }
   showMeter(show) { this.el.meter.style.opacity = show ? 1 : 0; }
   showAccuracy(show) { this.el.abar.style.opacity = show ? 1 : 0; }
-  /** pos 0..1 across the bar (0.5 = centre); hit = where it was stopped (null while moving); good = in the green. */
-  accuracy({ pos, hit, good }) {
+  /** pos 0..1 across the bar (0.5 = centre); hit = where it was stopped (null while moving). */
+  accuracy({ pos, hit }) {
     const v = hit == null ? pos : hit;
     const pct = `${(v * 100).toFixed(1)}%`;
     this.el.amark.style.left = pct; this.el.atri.style.left = pct;
-    this.el.apct.textContent = `${Math.round(100 - Math.abs(v - 0.5) * 200)}%`;
-    this.el.abar.className = 'abar' + (hit == null ? '' : good ? ' good' : ' bad');
+    const band = accBand((v - 0.5) * 2);
+    this.el.apct.textContent = `${band.name.toUpperCase()} · ${band.pct}%`;
+    this.el.abar.className = 'abar band-' + band.name + (hit == null ? '' : ' hit');
   }
   /** power 0..1 fill, marker 0..1 position (null hides), set = chosen power line. */
   meter({ label, fill, marker, set, pct }) {

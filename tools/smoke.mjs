@@ -69,6 +69,29 @@ try {
   if (acc.later !== 'acc') errors.push(`accuracy bar did not wait for the strike (phase ${acc.later} after 12s)`);
   if (acc.final === 'swing' || acc.final === 'aim') errors.push(`strike did not send the putt (state ${acc.final})`);
   console.log(`putting: drag kept aim (pace ${before.power.toFixed(2)} -> ${after.power.toFixed(2)}), PUTT opened the accuracy bar, it waited 12s, strike -> "${acc.final}"`);
+
+  // Full shot: ball cam takes over on launch, and the accuracy label reads as a band.
+  const full = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.step(0.2); g.enterAddress(); g.step(1.2); g.action(); g.step(0.5); g.action(); g.step(0.3);
+    const label = document.getElementById('apct').textContent; g.action(); g.step(1.0);
+    return { label, cam: g.camMode, state: g.state, tag: document.getElementById('camtag').textContent };
+  });
+  if (!/^(GOLD|GREEN|AMBER|RED) · \d+%$/.test(full.label)) errors.push(`accuracy label is "${full.label}", expected a band`);
+  if (full.cam !== 'chase' || full.tag !== 'BALL CAM') errors.push(`full shot did not switch to the ball cam (${full.cam}, tag "${full.tag}", state ${full.state})`);
+  console.log(`full shot: accuracy "${full.label}", camera ${full.cam} (${full.tag})`);
+
+  // Pro shop coupon 1210 maxes every upgrade; a player code round-trips through export/import.
+  const shop = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.openShop();
+    const input = document.getElementById('coupon'); input.value = '1210'; document.getElementById('redeem').click();
+    const msg = document.getElementById('couponMsg').textContent; const ups = { ...g.profile.upgrades };
+    g.menus.close();
+    const code = g.store.exportCode(g.profile); g.store.remove(g.profile.name); const back = g.store.importCode(code);
+    return { msg, ups, code: code.slice(0, 12), restored: back && back.name === g.profile.name && back.upgrades.power === 5 && back.coins === g.profile.coins };
+  });
+  if (!Object.values(shop.ups).every((v) => v === 5)) errors.push(`coupon did not max upgrades: ${JSON.stringify(shop.ups)} (${shop.msg})`);
+  if (!shop.restored) errors.push('player code did not round-trip');
+  console.log(`shop: "${shop.msg}", upgrades ${Object.values(shop.ups).join('')}, player code ${shop.code}… restored ${shop.restored}`);
   if (process.env.SMOKE_SHOT) { await page.screenshot({ path: process.env.SMOKE_SHOT, timeout: 180000 }); console.log('screenshot ' + process.env.SMOKE_SHOT); }
   ok = errors.length === 0;
 } catch (e) {

@@ -18,17 +18,29 @@ export class Menus {
       if (!bests.length && p.bestRound != null) bests.push(`Riverbend ${p.bestRound} (${fmtPar(p.bestToPar)})`);
       const best = bests.length ? 'best ' + bests.join(' · ') : 'no round yet';
       const ups = UPGRADES.map((u) => `<span class="pup" title="${esc(u.name)} ${p.upgrades[u.id] || 0}/${u.max}">${esc(u.name.split(' ')[0])} <b>${p.upgrades[u.id] || 0}</b></span>`).join('');
-      return `<div class="pcard" data-name="${esc(p.name)}"><div class="pmain"><div class="pname">${esc(p.name)}</div><div class="pmeta">${best} · ${p.rounds} round${p.rounds === 1 ? '' : 's'} · <b class="coin">◎ ${p.coins}</b></div><div class="pups">${ups}</div></div><button class="btn small" data-play="${esc(p.name)}">PLAY</button><button class="pdel" title="Delete profile" data-del="${esc(p.name)}">✕</button></div>`;
+      return `<div class="pcard" data-name="${esc(p.name)}"><div class="pmain"><div class="pname">${esc(p.name)}</div><div class="pmeta">${best} · ${p.rounds} round${p.rounds === 1 ? '' : 's'} · <b class="coin">◎ ${p.coins}</b></div><div class="pups">${ups}</div></div><button class="btn small" data-play="${esc(p.name)}">PLAY</button><button class="pdel" title="Copy this player's code to move them to another phone or link" data-code="${esc(p.name)}">⧉</button><button class="pdel" title="Delete profile" data-del="${esc(p.name)}">✕</button></div>`;
     };
+    const warn = store.storageOk === false ? '<div class="pempty" style="color:#ffb15a">This browser is not saving players (private mode or blocked storage). Copy a player\'s code (⧉) to keep them.</div>' : '';
     container.innerHTML = `<h1>RIVERBEND</h1><div class="sub">18 HOLES · PAR 72 · WHO'S PLAYING?</div>
-      <div class="plist">${list.length ? list.map(card).join('') : '<div class="pempty">No players yet — create one below.</div>'}</div>
-      <div class="pnew"><input id="pname" maxlength="18" placeholder="New player name" autocomplete="off"><button class="btn" id="pcreate">CREATE</button></div>`;
+      <div class="plist">${list.length ? list.map(card).join('') : '<div class="pempty">No players yet — create one below.</div>'}</div>${warn}
+      <div class="pnew"><input id="pname" maxlength="200" placeholder="New player name, or paste a player code" autocomplete="off"><button class="btn" id="pcreate">CREATE</button></div>
+      <div class="pempty" id="pnote">Players are saved in this browser for this link. ⧉ copies a player code you can paste here on another phone or link.</div>`;
     const input = container.querySelector('#pname');
-    const create = () => { const p = store.create(input.value); if (!p) { input.focus(); return; } onPick(p); };
+    const create = () => {
+      const v = input.value;
+      const p = store.constructor.isCode(v) ? store.importCode(v) : store.create(v.slice(0, 18));
+      if (!p) { input.focus(); container.querySelector('#pnote').textContent = store.constructor.isCode(v) ? 'That player code could not be read.' : 'Type a name first.'; return; }
+      onPick(p);
+    };
     container.querySelector('#pcreate').onclick = create;
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); e.stopPropagation(); });
     input.addEventListener('keyup', (e) => e.stopPropagation());
     for (const b of container.querySelectorAll('[data-play]')) b.onclick = () => onPick(store.get(b.dataset.play));
+    for (const b of container.querySelectorAll('[data-code]')) b.onclick = async () => {
+      const code = store.exportCode(store.get(b.dataset.code)); const note = container.querySelector('#pnote');
+      try { await navigator.clipboard.writeText(code); note.textContent = `Code for ${b.dataset.code} copied. Paste it into the name box on the other phone or link.`; }
+      catch (e) { window.prompt(`Copy this player code for ${b.dataset.code}:`, code); }
+    };
     for (const b of container.querySelectorAll('[data-del]')) b.onclick = () => { if (confirm(`Delete ${b.dataset.del}? Coins and upgrades will be lost.`)) { store.remove(b.dataset.del); this.profilePicker(container, store, onPick); } };
     if (!list.length) setTimeout(() => input.focus(), 50);
   }
@@ -43,7 +55,7 @@ export class Menus {
     for (const b of container.querySelectorAll('[data-course]')) b.onclick = () => onPick(parseInt(b.dataset.course, 10));
   }
 
-  shop(store, profile, onChange) {
+  shop(store, profile, onChange, msg = '') {
     const rows = UPGRADES.map((u) => {
       const lvl = profile.upgrades[u.id] || 0, cost = upgradeCost(lvl);
       const pips = Array.from({ length: u.max }, (_, i) => `<i class="${i < lvl ? 'on' : ''}"></i>`).join('');
@@ -51,9 +63,20 @@ export class Menus {
       return `<div class="srow"><div><div class="sname">${esc(u.name)} <span class="pips">${pips}</span></div><div class="sdesc">${esc(u.desc)}</div></div>${btn}</div>`;
     }).join('');
     this.show('shop', `<div class="mhead"><div><div class="sub">PRO SHOP</div><div class="mtitle">Upgrades</div></div><div class="mcoins">◎ ${profile.coins}<small>coins</small></div></div>
-      ${rows}<div class="mfoot"><span class="sdesc">Birdie 10 · Par 5 · Bogey 3 · Double 2 · Eagle 25 · Ace 50</span><button class="btn" id="mclose">DONE</button></div>`);
+      ${rows}
+      <div class="srow coupon"><div class="pnew"><input id="coupon" placeholder="Coupon code" autocomplete="off" inputmode="numeric"><button class="btn small" id="redeem">REDEEM</button></div><div class="sdesc" id="couponMsg">${esc(msg || '')}</div></div>
+      <div class="mfoot"><span class="sdesc">Birdie 10 · Par 5 · Bogey 3 · Double 2 · Eagle 25 · Ace 50</span><button class="btn" id="mclose">DONE</button></div>`);
     this.el.querySelector('#mclose').onclick = () => this.close();
     for (const b of this.el.querySelectorAll('[data-buy]')) b.onclick = () => { if (store.buy(profile, b.dataset.buy)) { onChange(); this.shop(store, profile, onChange); } };
+    const input = this.el.querySelector('#coupon');
+    const redeem = () => {
+      const r = store.redeem(profile, input.value);
+      if (r == null) { this.el.querySelector('#couponMsg').textContent = 'Unknown code.'; input.select(); return; }
+      onChange(); this.shop(store, profile, onChange, r);
+    };
+    this.el.querySelector('#redeem').onclick = redeem;
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') redeem(); e.stopPropagation(); });
+    input.addEventListener('keyup', (e) => e.stopPropagation());
   }
 
   /** Spin pad: drag inside the ball to set side (x) and back/top (y) spin, -1..1. */
