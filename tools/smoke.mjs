@@ -137,15 +137,42 @@ try {
   if (!(gold.miss < 0.75)) errors.push(`gold strike missed the previewed spot by ${gold.miss.toFixed(2)} m`);
   console.log(`gold strike: ${gold.miss.toFixed(2)} m from the previewed landing (${gold.dist.toFixed(0)} m shot, wind ${gold.wind.toFixed(1)} m/s)`);
 
+  // Wind indicators: a wind blowing straight downrange reads TAIL with the dial arrow up, and the flag streams
+  // downwind; a wind blowing toward the player's right reads L → R with the arrow pointing right.
+  const wind = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); const d = g.aimDir();
+    const read = () => ({ tag: document.getElementById('wtag').textContent, rot: parseFloat((document.getElementById('warrow').style.transform.match(/rotate\((-?[\d.]+)rad\)/) || [])[1]) });
+    g.windBase = { x: d.x * 5, z: d.z * 5, speed: 5, angle: 0 }; g.step(0.1); const tail = read();
+    const flag = g.holeObj.userData.flag; const fr = flag.rotation.y; const flagDir = { x: Math.cos(fr), z: -Math.sin(fr) }; const downwind = flagDir.x * d.x + flagDir.z * d.z;
+    const right = { x: -d.z, z: d.x }; g.windBase = { x: right.x * 5, z: right.z * 5, speed: 5, angle: 0 }; g.step(0.1); const toRight = read();
+    return { tail, downwind, toRight };
+  });
+  const norm = (r) => Math.atan2(Math.sin(r), Math.cos(r));
+  if (!(wind.tail.tag === 'TAIL' && Math.abs(norm(wind.tail.rot) + Math.PI / 2) < 0.05)) errors.push(`tailwind dial wrong: ${JSON.stringify(wind.tail)}`);
+  if (!(wind.downwind > 0.95)) errors.push(`flag does not stream downwind (dot ${wind.downwind.toFixed(2)})`);
+  if (!(wind.toRight.tag === 'L → R' && Math.abs(norm(wind.toRight.rot)) < 0.05)) errors.push(`crosswind dial wrong: ${JSON.stringify(wind.toRight)}`);
+  console.log(`wind: tailwind -> ${wind.tail.tag} arrow ${(norm(wind.tail.rot) * 180 / Math.PI).toFixed(0)}deg, flag downwind dot ${wind.downwind.toFixed(2)}; wind to the right -> ${wind.toRight.tag} arrow ${(norm(wind.toRight.rot) * 180 / Math.PI).toFixed(0)}deg`);
+
+  // Code 2430 in the pro shop restarts the current hole but keeps the rest of the round's card.
+  const redo = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.scores[4] = { strokes: 4, par: 4, penalties: 0 }; g.strokes = 3; g.ball.place(g.L.tee.x, g.L.tee.z + 60);
+    g.openShop(); document.getElementById('coupon').value = '2430'; document.getElementById('redeem').click(); g.step(0.2);
+    return { strokes: g.strokes, atTee: Math.hypot(g.ball.pos.x - g.L.tee.x, g.ball.pos.z - g.L.tee.z) < 1, kept: !!g.scores[4], state: g.state, modal: g.menus.open };
+  });
+  if (!(redo.strokes === 1 && redo.atTee && redo.kept && redo.state === 'aim' && !redo.modal)) errors.push(`code 2430 did not redo the hole cleanly: ${JSON.stringify(redo)}`);
+  console.log(`code 2430: stroke ${redo.strokes}, ball on the tee ${redo.atTee}, other holes kept ${redo.kept}`);
+
   // Full shot: ball cam takes over on launch, and the accuracy label reads as a band.
   const full = await page.evaluate(() => {
     const g = window.__game; g.newHole(); g.enterAim(); g.step(0.2); g.enterAddress(); g.step(1.2); g.action(); g.step(0.5); g.action(); g.step(0.3);
     const label = document.getElementById('apct').textContent; g.action(); g.step(1.0);
-    return { label, cam: g.camMode, state: g.state, tag: document.getElementById('camtag').textContent };
+    const cam = g.camMode, tag = document.getElementById('camtag').textContent; g.step(14);
+    return { label, cam, state: g.state, tag, msg: document.getElementById('msg').textContent };
   });
+  if (!/ (on the line|m (left|right) of the line)/.test(full.msg)) errors.push(`shot-end message lacks the line readout: "${full.msg}"`);
   if (!/^(GOLD|GREEN|AMBER|RED) · \d+%$/.test(full.label)) errors.push(`accuracy label is "${full.label}", expected a band`);
   if (full.cam !== 'chase' || full.tag !== 'BALL CAM') errors.push(`full shot did not switch to the ball cam (${full.cam}, tag "${full.tag}", state ${full.state})`);
-  console.log(`full shot: accuracy "${full.label}", camera ${full.cam} (${full.tag})`);
+  console.log(`full shot: accuracy "${full.label}", camera ${full.cam} (${full.tag}), result "${full.msg}"`);
 
   // Pro shop coupon 1210 maxes every upgrade; a player code round-trips through export/import.
   const shop = await page.evaluate(() => {

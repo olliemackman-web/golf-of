@@ -22,7 +22,7 @@ export class Hud {
     this.root = document.getElementById('hud');
     this.root.innerHTML = `
       <div class="card hole"><div class="hname" id="hname">${COURSE_NAME.toUpperCase()} · HOLE 1</div><div class="hrow"><span id="hpar">PAR 4</span><span id="hyds">— YDS</span></div><div class="hrow strokes"><span>STROKE <b id="stroke">1</b></span><span>TO PIN <b id="topin">—</b></span></div><div class="lie" id="lie"><span id="lietxt"></span><span class="coins" id="coins">◎ 0</span></div></div>
-      <div class="card wind"><div class="wlabel">WIND</div><div class="wdial"><div class="warrow" id="warrow">➤</div></div><div class="wspeed" id="wspeed">0 mph</div></div>
+      <div class="card wind"><div class="wlabel">WIND</div><div class="wdial"><div class="warrow" id="warrow">➤</div></div><div class="wspeed" id="wspeed">0 mph</div><div class="wtag" id="wtag"></div></div>
       <canvas id="minimap" width="170" height="230"></canvas>
       <div class="meter" id="meter"><div class="mlabel" id="mlabel">POWER</div><div class="mbar"><div class="mzone"></div><div class="mfill" id="mfill"></div><div class="mmark" id="mmark"></div><div class="mset" id="mset"></div></div><div class="mpct" id="mpct"></div></div>
       <div class="card club"><div class="cname" id="cname">Driver</div><div class="cdist" id="cdist">— yds</div><div class="chint">Q / E · change club</div></div>
@@ -43,7 +43,7 @@ export class Hud {
         <button class="cbtn big" id="btnSwing">SWING</button>
       </div>`;
     this.el = {};
-    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing', 'aimtick']) this.el[id] = document.getElementById(id);
+    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing', 'aimtick', 'wtag']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
@@ -124,7 +124,15 @@ export class Hud {
   setStroke(n) { this.el.stroke.textContent = n; }
   setToPin(m) { this.el.topin.textContent = m < 30 ? `${(m * 3.28084).toFixed(0)} ft` : `${yards(m)} yds`; }
   setLie(text) { this.el.lietxt.textContent = text; }
-  setWind(speedMs, relAngle) { this.el.wspeed.textContent = `${(speedMs * 2.237).toFixed(0)} mph`; this.el.warrow.style.transform = `rotate(${relAngle}rad)`; this.el.warrow.style.opacity = speedMs < 0.3 ? 0.3 : 1; }
+  /** phi = wind direction relative to the aim line (0 = straight downrange, + = toward the player's right). */
+  setWind(speedMs, phi) {
+    this.el.wspeed.textContent = `${(speedMs * 2.237).toFixed(0)} mph`;
+    // the glyph points right; on the dial "up" is downrange
+    this.el.warrow.style.transform = `rotate(${phi - Math.PI / 2}rad)`;
+    const calm = speedMs < 0.3; this.el.warrow.style.opacity = calm ? 0.3 : 1;
+    const a = Math.abs(phi);
+    this.el.wtag.textContent = calm ? 'CALM' : a < Math.PI / 4 ? 'TAIL' : a > 3 * Math.PI / 4 ? 'HEAD' : phi > 0 ? 'L → R' : 'R → L';
+  }
   setClub(club, carryM) { this.el.cname.textContent = club.name; this.el.cdist.textContent = club.putter ? 'on the green' : `~${yards(carryM)} yds`; }
   setHint(html) { this.el.hint.innerHTML = html; }
   setCamTag(t) { this.el.camtag.textContent = t; }
