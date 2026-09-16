@@ -32,6 +32,9 @@ npm run test:browser   # boots the real game in headless Chromium, desktop and p
 
 `test:browser` needs a Playwright Chromium: run `npx playwright install chromium`
 once on a new machine. `SMOKE_SHOT=shot.png npm run test:browser` also saves a screenshot.
+`npm run shots [dir]` renders a fixed set of viewpoints (tee, overhead, landing, address, green,
+approach) to PNGs for eyeballing graphics changes without a GPU; `COURSE=1` picks Gosfield,
+`HOLE=3` adds that hole's tee shot, `ONLY=01,06` limits the views.
 `.github/workflows/ci.yml` runs all of the above on every push.
 
 Working from Claude Code on the web or the mobile app: `.claude/hooks/session-start.sh`
@@ -64,7 +67,7 @@ Pick or create a player on the start screen (profiles live in the browser's loca
 
 - `src/courseData.js` — `makeHole(n)` designs each of the 18 holes from a seed; heightmap, surface mask and physics lookups for the hole in play (no three.js; runs in node — `node tools/holes.mjs` lists the course).
 - `src/physics.js` — ball flight (drag + Magnus), bounce, roll, hole capture, club table. `tools/calibrate.mjs` prints carry per club.
-- `src/terrain.js` — terrain splat shader (rough / fairway stripes / green / sand / water), water, far hills, sky, clouds, cup + flag.
+- `src/terrain.js` — terrain splat shader (rough / first cut / view-dependent mown stripes / green / bunkers with shaded lips / water, plus a baked canopy-shadow map from the trees), water, far hills, gradient sky dome + environment map, clouds, cup + flag.
 - `src/vegetation.js` — instanced trees (trunks + leaf cards), grass tufts, reeds, tree collisions.
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
 - `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.

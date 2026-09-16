@@ -11,7 +11,8 @@
     "holes": "node tools/holes.mjs",
     "calibrate": "node tools/calibrate.mjs",
     "fuzz": "node tools/fuzz.mjs",
-    "perf": "node tools/perf.mjs"
+    "perf": "node tools/perf.mjs",
+    "shots": "node tools/shots.mjs"
   },
   "dependencies": {
     "three": "file:vendor/three"

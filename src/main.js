@@ -3,9 +3,10 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
-import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers } from './terrain.js';
+import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
 import { buildVegetation, setWindTime } from './vegetation.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
@@ -43,9 +44,10 @@ class Game {
     r.setPixelRatio(this.quality.dpr);
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.9;
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0;
     const scene = this.scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xc4d3e2, 0.00068);
+    // fog colour matches the sky dome at the horizon so distant trees and hills melt into it
+    scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.00054);
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.05, 6000);
     this.lookDir = new THREE.Vector3(0, 0, 1);
 
@@ -57,14 +59,14 @@ class Game {
     this.holeGroup = null; this.scores = []; this.holeIndex = 0; this.courseIndex = 0;
     await this.buildHoleScene(0, (t) => { document.getElementById('loading').textContent = t; });
 
-    // lights
-    const sun = this.sun = new THREE.DirectionalLight(0xfff2dc, 2.8);
+    // lights: a warm key from the sun, cool fill from the sky, so shadows go blue rather than grey
+    const sun = this.sun = new THREE.DirectionalLight(0xffe7c4, 3.1);
     sun.castShadow = true; sun.shadow.mapSize.set(this.quality.shadow, this.quality.shadow);
     const sr = this.quality.shadowRange;
     const sc = sun.shadow.camera; sc.near = 1; sc.far = 700; sc.left = -sr; sc.right = sr; sc.top = sr; sc.bottom = -sr;
     sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.5; sun.shadow.radius = 2;
     scene.add(sun); scene.add(sun.target);
-    scene.add(new THREE.HemisphereLight(0xbfd6f5, 0x4d6132, 0.45));
+    scene.add(new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.5));
 
     // ball
     const bmat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0, clearcoat: 0.8, clearcoatRoughness: 0.2, bumpMap: this.tex.ballBump, bumpScale: 0.0008 });
@@ -109,9 +111,18 @@ class Game {
       const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { samples: this.quality.msaa, type: THREE.HalfFloatType });
       this.composer = new EffectComposer(r, rt);
       this.composer.addPass(new RenderPass(scene, this.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.16, 0.6, 0.88);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.14, 0.6, 0.86);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
+      // final grade: a touch more saturation and contrast, and a soft vignette to frame the view
+      this.composer.addPass(new ShaderPass({
+        uniforms: { tDiffuse: { value: null }, uVignette: { value: 0.3 }, uSat: { value: 1.08 }, uContrast: { value: 1.05 } },
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        fragmentShader: `uniform sampler2D tDiffuse; uniform float uVignette, uSat, uContrast; varying vec2 vUv;
+          void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+          c.rgb = mix(vec3(l), c.rgb, uSat); c.rgb = (c.rgb - 0.5) * uContrast + 0.5;
+          vec2 d = vUv - 0.5; c.rgb *= 1.0 - uVignette * smoothstep(0.3, 1.0, dot(d, d) * 2.2); gl_FragColor = c; }`,
+      }));
     } else {
       // mobile: plain forward render, no post chain
       this.composer = { render: () => r.render(scene, this.camera), setSize: () => {} };
@@ -150,20 +161,21 @@ class Game {
       const shared = new Set(Object.values(this.tex));
       this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.map && !shared.has(m.map)) m.map.dispose(); if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
-      if (this.terrain) this.terrain.maskTex.dispose();
+      if (this.terrain) { this.terrain.maskTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
     }
     progress('SHAPING THE LAND…'); await this.frame();
     this.holeIndex = n;
     this.course = new Course(holeFor(this.courseIndex, n));
     const g = this.holeGroup = new THREE.Group(); scene.add(g);
     progress('LAYING THE TURF…'); await this.frame();
-    const terr = buildTerrain(this.course, this.tex); this.terrain = terr; g.add(terr.mesh);
+    const terr = buildTerrain(this.course, this.tex, this.sunDir, { lite: this.isMobile }); this.terrain = terr; g.add(terr.mesh);
     this.water = buildWater(this.course, this.tex, this.envMap); if (this.water) g.add(this.water);
     g.add(buildFarHills(this.course));
     this.holeObj = buildHole(this.course, this.tex); g.add(this.holeObj);
     g.add(buildTeeMarkers(this.course));
     progress('PLANTING TREES…'); await this.frame();
     const veg = buildVegetation(this.course, this.tex, this.quality.veg); g.add(veg.group); this.trees = veg.field;
+    if (veg.ao) terr.uniforms.tAO.value = veg.ao;
     if (this.ball) { this.ball.course = this.course; this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin; }
     if (this.hud) this.hud.setHole(this.course);
   }

@@ -1,6 +1,5 @@
 // Terrain mesh + splat shader, water, far hills, sky, clouds, hole & flag.
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
 import { splineDist } from './courseData.js';
 import { HOLE_R } from './physics.js';
 import { fbm } from './noise.js';
@@ -13,9 +12,9 @@ export function buildTextures() {
   const sand = T.makeTex(T.sandTexture());
   const noise = T.makeTex(T.noiseTexture(), { srgb: false });
   const bark = T.makeTex(T.barkTexture());
-  const leaf = T.makeTex(T.leafCardTexture({ seed: 31, hue: 105 }), { repeat: false });
-  const leaf2 = T.makeTex(T.leafCardTexture({ seed: 77, hue: 88 }), { repeat: false });
-  const needle = T.makeTex(T.leafCardTexture({ seed: 45, hue: 130, conifer: true }), { repeat: false });
+  const leaf = T.makeTex(T.leafCardTexture({ seed: 31, hue: 101 }), { repeat: false });
+  const leaf2 = T.makeTex(T.leafCardTexture({ seed: 77, hue: 86 }), { repeat: false });
+  const needle = T.makeTex(T.leafCardTexture({ seed: 45, hue: 132, conifer: true }), { repeat: false });
   const blade = T.makeTex(T.grassBladeTexture(), { repeat: false });
   const cloud = T.makeTex(T.cloudTexture(), { repeat: false });
   const ballBump = T.makeTex(T.ballBumpTexture(), { srgb: false });
@@ -24,7 +23,11 @@ export function buildTextures() {
   return { grass, grassNormal, sand, noise, bark, leaf, leaf2, needle, blade, cloud, ballBump, flag, waterNormal };
 }
 
-export function buildTerrain(course, tex) {
+/**
+ * Terrain mesh with the turf splat shader. `lite` (phones) skips the close-range blade layer and
+ * the neighbour taps used for the bunker lip, saving about half the texture fetches per pixel.
+ */
+export function buildTerrain(course, tex, sunDir = new THREE.Vector3(0.5, 0.7, 0.5), { lite = false } = {}) {
   const N = course.res, size = course.size, half = size / 2, step = course.step;
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(N * N * 3), uv = new Float32Array(N * N * 2);
@@ -49,16 +52,19 @@ export function buildTerrain(course, tex) {
   maskTex.flipY = false; maskTex.needsUpdate = true; maskTex.minFilter = THREE.LinearFilter; maskTex.magFilter = THREE.LinearFilter;
   maskTex.wrapS = maskTex.wrapT = THREE.ClampToEdgeWrapping;
 
-  const normalTiles = size / 2.6;
+  const normalTiles = size / 2.2;
   tex.grassNormal.repeat.set(normalTiles, normalTiles);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0, normalMap: tex.grassNormal, normalScale: new THREE.Vector2(0.32, 0.32) });
-  // Stripes run along the first fairway segment.
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, normalMap: tex.grassNormal, normalScale: new THREE.Vector2(0.5, 0.5) });
+  // Mowing runs along the first fairway segment; stripe bands lie side by side across it.
   const s0 = course.layout.spline[1], s1 = course.layout.spline[3];
-  const sd = new THREE.Vector2(s1[0] - s0[0], s1[1] - s0[1]).normalize();
-  const stripeDir = new THREE.Vector2(-sd.y, sd.x);
+  const mowDir = new THREE.Vector2(s1[0] - s0[0], s1[1] - s0[1]).normalize();
+  const stripeDir = new THREE.Vector2(-mowDir.y, mowDir.x);
+  const sunXZ = new THREE.Vector2(sunDir.x, sunDir.z).normalize();
+  // Canopy occlusion is painted by the vegetation pass; until then a single black texel means "none".
+  const noAO = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat); noAO.needsUpdate = true;
   const uniforms = {
-    tMask: { value: maskTex }, tGrass: { value: tex.grass }, tSand: { value: tex.sand }, tNoise: { value: tex.noise },
-    uSize: { value: size }, uStripeDir: { value: stripeDir }, uTime: { value: 0 },
+    tMask: { value: maskTex }, tGrass: { value: tex.grass }, tSand: { value: tex.sand }, tNoise: { value: tex.noise }, tAO: { value: noAO },
+    uSize: { value: size }, uStripeDir: { value: stripeDir }, uMowDir: { value: mowDir }, uSunXZ: { value: sunXZ }, uTime: { value: 0 },
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -68,41 +74,91 @@ export function buildTerrain(course, tex) {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vWorldPos;
-uniform sampler2D tMask, tGrass, tSand, tNoise;
-uniform float uSize; uniform vec2 uStripeDir;`)
+uniform sampler2D tMask, tGrass, tSand, tNoise, tAO;
+uniform float uSize; uniform vec2 uStripeDir, uMowDir, uSunXZ;
+float terrainRim; float terrainSand; float terrainWater; float terrainFair; float terrainGreen; float terrainDist;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 vec2 wuv = vWorldPos.xz;
-vec4 mask = texture2D(tMask, wuv / uSize + 0.5);
+vec2 muv = wuv / uSize + 0.5;
+vec4 mask = texture2D(tMask, muv);
 float fairway = mask.r, green = mask.g, sand = mask.b, water = mask.a;
 float rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
-vec3 noiseA = texture2D(tNoise, wuv / 43.0).rgb;
-vec3 noiseB = texture2D(tNoise, wuv / 7.3).rgb;
+vec4 nA = texture2D(tNoise, wuv / 61.0);
+vec4 nB = texture2D(tNoise, wuv / 9.7 + 0.3);
 float camDist = length(vWorldPos - cameraPosition);
-float farMix = smoothstep(12.0, 90.0, camDist);
-vec3 g1 = texture2D(tGrass, wuv / 2.4).rgb;
-vec3 g2 = texture2D(tGrass, wuv / 11.0 + 0.37).rgb;
-vec3 gFar = texture2D(tGrass, wuv / 37.0 + 0.11).rgb;
-vec3 grassBase = mix(mix(g1, g2, 0.45), gFar, farMix * 0.6);
-vec3 roughCol = grassBase * vec3(0.82, 0.86, 0.52) * (0.72 + 0.55 * noiseA.r);
-roughCol = mix(roughCol, roughCol * vec3(1.2, 1.02, 0.62), smoothstep(0.5, 0.85, noiseA.g) * 0.7);
-float stripe = sin(dot(wuv, uStripeDir) * 6.2831 / 7.0);
-float stripeF = 0.9 + 0.1 * smoothstep(-0.25, 0.25, stripe);
-vec3 fairCol = grassBase * vec3(0.86, 1.14, 0.62) * stripeF * (0.9 + 0.2 * noiseA.r);
-vec3 g3 = texture2D(tGrass, wuv / 0.8).rgb;
-vec2 sd2 = vec2(-uStripeDir.y, uStripeDir.x);
-float chk = smoothstep(-0.2, 0.2, sin(dot(wuv, uStripeDir) * 6.2831 / 2.6)) * 0.5 + smoothstep(-0.2, 0.2, sin(dot(wuv, sd2) * 6.2831 / 2.6)) * 0.5;
-vec3 greenCol = mix(g3, grassBase, 0.55) * vec3(0.92, 1.2, 0.7) * (0.9 + 0.14 * chk);
-vec3 sandCol = texture2D(tSand, wuv / 3.1).rgb * (0.88 + 0.24 * noiseB.g);
-vec3 mud = vec3(0.22, 0.19, 0.12) * (0.8 + 0.4 * noiseB.r);
-vec3 splat = roughCol * rough + fairCol * fairway + greenCol * green + sandCol * sand + mud * water;
-diffuseColor.rgb *= splat;`)
+float farMix = smoothstep(10.0, 80.0, camDist);
+// turf detail at three scales, drifting to a macro sample far away so the tiling never shows
+vec3 g1 = texture2D(tGrass, wuv / 1.9).rgb;
+vec3 g2 = texture2D(tGrass, wuv / 8.3 + 0.37).rgb;
+vec3 gFar = texture2D(tGrass, wuv / 41.0 + 0.11).rgb;
+vec3 turf = mix(mix(g1, g2, 0.5), gFar, farMix * 0.65);
+#ifndef TERRAIN_LITE
+// individual blades within a few metres of the eye
+vec3 g0 = texture2D(tGrass, wuv / 0.62 + 0.5).rgb;
+turf = mix(turf, mix(turf, g0, 0.6), 1.0 - smoothstep(1.5, 14.0, camDist));
+#endif
+// ROUGH: longer, darker, bluer, with straw-coloured worn patches
+vec3 roughCol = turf * vec3(0.70, 0.84, 0.52);
+roughCol = mix(roughCol, roughCol * vec3(1.22, 1.06, 0.62), nA.b * 0.6);
+roughCol *= 0.74 + 0.52 * nA.r;
+roughCol = mix(roughCol, roughCol * vec3(0.86, 0.96, 1.05), nB.g * 0.3);
+// FAIRWAY: mown stripes. Bands lie side by side across the fairway; neighbouring bands were mown
+// in opposite directions, so a band reads lighter when you look along the way it was mown.
+vec2 toCam = normalize(cameraPosition.xz - wuv);
+float band = sign(sin(dot(wuv, uStripeDir) * 6.2831 / 6.5));
+float sheen = band * dot(toCam, uMowDir);
+float stripeF = 1.0 + 0.12 * sheen * (1.0 - farMix * 0.35) + 0.025 * band;
+vec3 fairCol = turf * vec3(0.90, 1.06, 0.56) * stripeF * (0.94 + 0.12 * nA.r);
+fairCol = mix(fairCol, fairCol * vec3(1.06, 1.0, 0.82), nA.b * 0.3);
+// first cut between fairway and rough: half-way colour, a touch darker because it is longer
+float core = smoothstep(0.5, 0.97, fairway);
+vec3 collarCol = mix(roughCol, fairCol, 0.55) * 0.93;
+vec3 fairMixed = mix(collarCol, fairCol, core);
+// GREEN: fine cross-cut checker with the same view-dependent sheen, and a fringe collar
+vec3 g3 = texture2D(tGrass, wuv / 0.7).rgb;
+float chkA = sign(sin(dot(wuv, uStripeDir) * 6.2831 / 2.2));
+float chkB = sign(sin(dot(wuv, uMowDir) * 6.2831 / 2.2));
+float chkSheen = chkA * dot(toCam, uMowDir) * 0.06 + chkB * dot(toCam, uStripeDir) * 0.06;
+vec3 greenCol = mix(g3, turf, 0.6) * vec3(0.92, 1.10, 0.62) * (1.0 + chkSheen + 0.02 * (chkA + chkB)) * (0.97 + 0.06 * nB.g);
+float gcore = smoothstep(0.55, 0.97, green);
+vec3 greenMixed = mix(fairCol * 0.96, greenCol, gcore);
+// SAND: raked bunker with a shaded lip on the side facing away from the sun. The mask edge is a
+// single texel wide, so the sand weight is smoothed over five taps before it is used for the
+// blend and the lip, otherwise the texel grid shows as steps along the edge.
+vec3 sandCol = texture2D(tSand, wuv / 2.6).rgb * (0.92 + 0.16 * nB.g) * (0.97 + 0.06 * nB.a);
+float rim = smoothstep(0.03, 0.4, sand) * (1.0 - smoothstep(0.4, 0.95, sand));
+#ifdef TERRAIN_LITE
+sandCol *= 1.0 - 0.28 * rim;
+#else
+float px = 1.1 / uSize;
+float sL = texture2D(tMask, muv - vec2(px, 0.0)).b, sR = texture2D(tMask, muv + vec2(px, 0.0)).b;
+float sD = texture2D(tMask, muv - vec2(0.0, px)).b, sU = texture2D(tMask, muv + vec2(0.0, px)).b;
+sand = (sand * 2.0 + sL + sR + sD + sU) / 6.0;
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
+vec2 sg = vec2(sR - sL, sU - sD); // points into the bunker
+rim = smoothstep(0.03, 0.4, sand) * (1.0 - smoothstep(0.4, 0.95, sand));
+float lipShade = rim * clamp(-dot(normalize(sg + 1e-5), uSunXZ), 0.0, 1.0);
+sandCol *= 1.0 - 0.5 * lipShade - 0.16 * rim;
+#endif
+// WATER BED: dark silt, darker toward the middle of the pond
+vec3 mud = vec3(0.20, 0.17, 0.11) * (0.8 + 0.4 * nB.r) * (1.0 - 0.5 * smoothstep(0.4, 1.0, water));
+float gsum = max(1e-4, rough + fairway + green);
+vec3 grass = (roughCol * rough + fairMixed * fairway + greenMixed * green) / gsum;
+grass *= 1.0 - 0.2 * rim; // grass overhanging the bunker lip
+vec3 splat = grass * (1.0 - sand - water) + sandCol * sand + mud * water;
+// baked canopy shadow / grounding under the trees, plus a little extra darkening deep in the woods
+float ao = texture2D(tAO, muv).r;
+splat *= 1.0 - 0.52 * ao;
+diffuseColor.rgb *= splat;
+terrainRim = rim; terrainSand = sand; terrainWater = water; terrainFair = fairway; terrainGreen = green; terrainDist = camDist;`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-roughnessFactor = mix(0.96, 0.82, sand);
-roughnessFactor = mix(roughnessFactor, 0.6, water);`)
+float roughW = clamp(1.0 - terrainFair - terrainGreen - terrainSand - terrainWater, 0.0, 1.0);
+roughnessFactor = 0.96 * roughW + 0.78 * terrainFair + 0.70 * terrainGreen + 0.86 * terrainSand + 0.55 * terrainWater;`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(8.0, 60.0, camDist) * 0.9 + sand * 0.5));`);
+normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(6.0, 45.0, terrainDist) * 0.92 + terrainSand * 0.6 + terrainGreen * 0.5));`);
   };
-  mat.customProgramCacheKey = () => 'terrain-splat';
+  if (lite) mat.defines = { TERRAIN_LITE: '' };
+  mat.customProgramCacheKey = () => 'terrain-splat-v2' + (lite ? '-lite' : '');
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true; mesh.castShadow = false;
   mesh.name = 'terrain';
@@ -116,10 +172,10 @@ export function buildWater(course, tex, envMap) {
     const r = Math.max(p.rx, p.rz) * 1.45;
     const geo = new THREE.CircleGeometry(r, 64);
     geo.rotateX(-Math.PI / 2);
-    tex.waterNormal.repeat.set(r / 4, r / 4);
+    tex.waterNormal.repeat.set(r / 5, r / 5);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x1f4a52, roughness: 0.22, metalness: 0.0, transparent: true, opacity: 0.92,
-      normalMap: tex.waterNormal, normalScale: new THREE.Vector2(0.35, 0.35), envMap, envMapIntensity: 1.1,
+      color: 0x1b434c, roughness: 0.16, metalness: 0.0, transparent: true, opacity: 0.94,
+      normalMap: tex.waterNormal, normalScale: new THREE.Vector2(0.22, 0.22), envMap, envMapIntensity: 1.25,
     });
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.tMask = { value: null }; shader.uniforms.uSize = { value: course.size };
@@ -145,7 +201,7 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.32, 0.36, 0.28), (1.0 - smoothst
 
 /** Big, cheap hills ringing the course so the horizon isn't empty. */
 export function buildFarHills(course) {
-  const R = 2600, N = 160;
+  const R = 2600, N = 220;
   const geo = new THREE.PlaneGeometry(R * 2, R * 2, N, N);
   geo.rotateX(-Math.PI / 2);
   const p = geo.attributes.position, col = new Float32Array(p.count * 3);
@@ -153,7 +209,7 @@ export function buildFarHills(course) {
     const x = p.getX(i), z = p.getZ(i), r = Math.hypot(x, z);
     const half = course.size / 2;
     const rise = Math.min(1, Math.max(0, (r - (half + 10)) / 500));
-    let h = (fbm(x / 600 + 9 + course.layout.seed, z / 600 + 2, 4) * 0.5 + 0.5) * 140 * rise + fbm(x / 150, z / 150, 3) * 18 * rise;
+    let h = (fbm(x / 600 + 9 + course.layout.seed, z / 600 + 2, 4) * 0.5 + 0.5) * 150 * rise + fbm(x / 150, z / 150, 3) * 22 * rise + fbm(x / 48, z / 48, 2) * 6 * rise;
     if (r < half + 20) {
       // sit well under the real terrain (bunkers/pond are dug out), rising to meet it at the edge
       const c = half - 5;
@@ -163,8 +219,17 @@ export function buildFarHills(course) {
     }
     p.setY(i, h);
     const n = fbm(x / 90, z / 90, 3) * 0.5 + 0.5;
+    const wood = fbm(x / 260 + 3, z / 260 - 1, 3) * 0.5 + 0.5; // darker wooded slopes vs pasture
+    const clump = Math.max(0, fbm(x / 42 + 7, z / 42 - 2, 3) * 0.5 + 0.5 - 0.5) * 2; // copses and hedgerows
     const t = Math.min(1, h / 120);
-    col[i * 3] = 0.16 + n * 0.08 + t * 0.05; col[i * 3 + 1] = 0.3 + n * 0.1 - t * 0.04; col[i * 3 + 2] = 0.13 + n * 0.05 + t * 0.06;
+    // base: pasture and woodland, then aerial perspective pulls the far ridges toward the sky colour
+    let cr = 0.13 + n * 0.07 + t * 0.03 - wood * 0.04, cg = 0.23 + n * 0.09 - t * 0.03 - wood * 0.06, cb = 0.09 + n * 0.04 + t * 0.05 - wood * 0.02;
+    const dk = 1 - 0.4 * clump * (0.4 + wood * 0.6);
+    cr *= dk; cg *= dk; cb *= dk;
+    const dist = Math.min(1, Math.max(0, (r - 500) / 2100));
+    const haze = dist * dist * 0.62;
+    cr = cr + (HORIZON.r - cr) * haze; cg = cg + (HORIZON.g - cg) * haze; cb = cb + (HORIZON.b - cb) * haze;
+    col[i * 3] = cr; col[i * 3 + 1] = cg; col[i * 3 + 2] = cb;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.computeVertexNormals();
@@ -175,35 +240,70 @@ export function buildFarHills(course) {
   return mesh;
 }
 
+/** Horizon colour shared by the sky dome and the scene fog, so the far ground melts into the sky. */
+export const HORIZON = new THREE.Color(0.64, 0.72, 0.82);
+
+/**
+ * Sky dome: a three-stop gradient (deep blue zenith, mid blue, pale haze at the horizon) with a
+ * warm glow around the sun and a soft sun disc. Drawn at the far plane and tone-mapped with the
+ * rest of the scene. Also baked into the environment map for reflections and ambient colour.
+ */
 export function buildSky(renderer, scene) {
-  const sky = new Sky();
-  sky.scale.setScalar(20000);
-  const u = sky.material.uniforms;
-  u.turbidity.value = 3.2; u.rayleigh.value = 1.6; u.mieCoefficient.value = 0.006; u.mieDirectionalG.value = 0.86;
-  const elevation = 34, azimuth = 210; // late-morning sun, behind and right of the tee
+  const elevation = 29, azimuth = 210; // mid-morning sun, behind and right of the tee: long shadows, warm light
   const phi = THREE.MathUtils.degToRad(90 - elevation), theta = THREE.MathUtils.degToRad(azimuth);
   const sunDir = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
-  u.sunPosition.value.copy(sunDir);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      uSun: { value: sunDir.clone() },
+      uZenith: { value: new THREE.Color(0.09, 0.22, 0.58) },
+      uMid: { value: new THREE.Color(0.30, 0.50, 0.86) },
+      uHorizon: { value: HORIZON.clone() },
+      uWarm: { value: new THREE.Color(0.98, 0.86, 0.66) },
+      uSunCol: { value: new THREE.Color(1.0, 0.95, 0.85) },
+    },
+    vertexShader: `varying vec3 vDir;
+      void main() { vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }`,
+    fragmentShader: `uniform vec3 uSun, uZenith, uMid, uHorizon, uWarm, uSunCol; varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float y = d.y;
+        float h = pow(clamp(y, 0.0, 1.0), 0.5);
+        vec3 col = mix(uHorizon, uMid, smoothstep(0.0, 0.42, h));
+        col = mix(col, uZenith, smoothstep(0.35, 1.0, h));
+        float sd = max(0.0, dot(d, uSun));
+        // warm haze toward the sun, strongest low in the sky
+        col = mix(col, uWarm, pow(sd, 3.0) * 0.4 * (1.0 - h * 0.7));
+        col += uSunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 40.0) * 0.5 + pow(sd, 6.0) * 0.12);
+        // below the horizon: a slightly darker haze so the sky never shows through gaps
+        col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.08, y));
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 48, 24), mat);
+  sky.frustumCulled = false; sky.renderOrder = -10;
   scene.add(sky);
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const skyScene = new THREE.Scene(); skyScene.add(sky.clone());
+  const skyScene = new THREE.Scene(); skyScene.add(new THREE.Mesh(sky.geometry, mat));
   const envMap = pmrem.fromScene(skyScene, 0.04).texture;
   scene.environment = envMap;
-  scene.environmentIntensity = 0.55;
+  scene.environmentIntensity = 0.42;
   pmrem.dispose();
   return { sky, sunDir, envMap };
 }
 
 export function buildClouds(tex) {
   const group = new THREE.Group();
-  const mat = new THREE.SpriteMaterial({ map: tex.cloud, transparent: true, depthWrite: false, opacity: 0.9, fog: true });
+  const mat = new THREE.SpriteMaterial({ map: tex.cloud, color: 0xfff7ee, transparent: true, depthWrite: false, opacity: 0.68, fog: true });
   const sprites = [];
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 16; i++) {
     const s = new THREE.Sprite(mat);
-    const a = (i / 18) * Math.PI * 2 + Math.sin(i * 7.3) * 0.5, r = 500 + (Math.sin(i * 3.1) * 0.5 + 0.5) * 1400;
-    s.position.set(Math.cos(a) * r, 240 + (Math.sin(i * 1.9) * 0.5 + 0.5) * 220, Math.sin(a) * r);
-    const w = 260 + (Math.sin(i * 5.7) * 0.5 + 0.5) * 420;
-    s.scale.set(w, w * 0.5, 1);
+    const a = (i / 16) * Math.PI * 2 + Math.sin(i * 7.3) * 0.5, r = 700 + (Math.sin(i * 3.1) * 0.5 + 0.5) * 1700;
+    s.position.set(Math.cos(a) * r, 340 + (Math.sin(i * 1.9) * 0.5 + 0.5) * 300, Math.sin(a) * r);
+    const w = 520 + (Math.sin(i * 5.7) * 0.5 + 0.5) * 760;
+    s.scale.set(w, w * 0.4, 1);
     s.userData.drift = 1.5 + Math.sin(i) * 0.5;
     group.add(s); sprites.push(s);
   }
