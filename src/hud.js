@@ -29,6 +29,7 @@ export class Hud {
       <div class="msg" id="msg"></div>
       <div class="hint" id="hint"></div>
       <div class="camtag" id="camtag"></div>
+      <div class="aimtick" id="aimtick"></div>
       <div class="abar" id="abar"><div class="atri" id="atri"></div><div class="atrack"><div class="aticks"></div><div class="azone"></div><div class="amark" id="amark"></div></div><div class="alabel">ACCURACY <b id="apct">0%</b></div></div>
       <div class="target" id="target"><div class="tlabel">TARGET <b id="tval">100%</b> <span id="tcarry"></span></div><input type="range" id="tpow" min="8" max="100" value="100"></div>
       <div class="controls" id="controls">
@@ -42,7 +43,7 @@ export class Hud {
         <button class="cbtn big" id="btnSwing">SWING</button>
       </div>`;
     this.el = {};
-    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing']) this.el[id] = document.getElementById(id);
+    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hpar', 'hyds', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing', 'aimtick']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
@@ -113,8 +114,10 @@ export class Hud {
   setSwingLabel(text) { this.el.btnSwing.textContent = text; this.el.btnSwing.style.visibility = text ? 'visible' : 'hidden'; }
   setCoins(n) { this.el.coins.textContent = `◎ ${n}`; }
   setSpinLabel(t) { this.el.btnSpin.textContent = t; this.el.btnSpin.classList.toggle('active', t !== 'SPIN'); }
-  setAimControls(show) { for (const k of ['btnShop', 'btnSpin', 'btnView', 'btnPrev', 'btnNext', 'target']) this.el[k].style.display = show ? '' : 'none'; if (!show) this.el.btnZoom.style.display = 'none'; }
+  setAimControls(show) { for (const k of ['btnShop', 'btnSpin', 'btnView', 'btnPrev', 'btnNext', 'target']) this.el[k].style.display = show ? '' : 'none'; if (!show) { this.el.btnZoom.style.display = 'none'; this.el.aimtick.style.display = 'none'; } }
   setZoomVisible(v) { this.el.btnZoom.style.display = v ? '' : 'none'; }
+  /** Thin centre tick shown while aiming: the aim line converges on it, so line your target up with it. */
+  setAimTick(v) { this.el.aimtick.style.display = v ? '' : 'none'; }
   setZoomLabel(z) { this.el.btnZoom.textContent = `${z >= 10 ? Math.round(z) : +z.toFixed(1)}×`; this.el.btnZoom.classList.toggle('active', z > 1.01); }
   setTarget(pct, carryM, putter) { this.el.tval.textContent = `${Math.round(pct * 100)}%`; this.el.tcarry.textContent = putter ? `· ${(carryM * 3.28084).toFixed(0)} ft` : `· ${yards(carryM)} yds`; if (parseInt(this.el.tpow.value, 10) !== Math.round(pct * 100)) this.el.tpow.value = Math.round(pct * 100); }
   setHoleYards(m) { this.el.hyds.textContent = `${yards(m)} YDS`; }
