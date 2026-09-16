@@ -238,7 +238,7 @@ class Game {
     this.ball.place(this.L.tee.x, this.L.tee.z);
     this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
     this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
-    this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN'); this.setAimZoom(1);
+    this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN'); this.aimZoom = 1; this.hud.setZoomLabel(1);
     this.hud.setCamTag('');
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     const wa = this.rnd() * Math.PI * 2, ws = 0.8 + this.rnd() * 4.5;
@@ -305,24 +305,29 @@ class Game {
   }
 
   aimBaseFov() { return this.club.putter ? 70 : 62; }
-  /** Zoom the aim view in or out (1× to ZOOM_MAX). Kept between shots, reset on a new hole. */
+  /** Zoom only applies in the landing view; everywhere else the aim camera is at its normal width. */
+  zoomActive() { return this.state === 'aim' && this.aimView === 'landing' && !this.club.putter; }
+  effectiveZoom() { return this.zoomActive() ? this.aimZoom : 1; }
+  applyAimFov() { this.camera.fov = this.aimBaseFov() / this.effectiveZoom(); this.camera.updateProjectionMatrix(); this.hud.setZoomVisible(this.zoomActive()); }
+  /** Zoom the landing view in or out (1× to ZOOM_MAX). Kept between shots, reset on a new hole. */
   setAimZoom(z) {
+    if (!this.zoomActive()) return;
     this.aimZoom = clamp(z, 1, ZOOM_MAX);
     this.hud.setZoomLabel(this.aimZoom);
-    if (this.state === 'aim') { this.camera.fov = this.aimBaseFov() / this.aimZoom; this.camera.updateProjectionMatrix(); }
+    this.applyAimFov();
   }
 
   enterAim() {
     this.state = 'aim';
     this.golfer.group.visible = false;
-    this.camera.fov = this.aimBaseFov() / this.aimZoom; this.camera.updateProjectionMatrix();
+    this.applyAimFov();
     if (this.club.putter) this.placePutterRig();
     this.hud.showMeter(false); this.hud.showAccuracy(false);
     this.hud.setCamTag('');
     this.updateLieHud();
     this.previewDirty = true;
     if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line &nbsp; <b>W / S</b> fine-tune pace &nbsp; <b>SPACE</b> putt when ready');
-    else this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>WHEEL / Z X</b> zoom &nbsp; <b>V</b> view &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
+    else this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>V</b> view (landing view zooms: wheel / Z X) &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
     this.hud.setSwingLabel(this.club.putter ? 'PUTT' : 'ADDRESS'); this.hud.setAimControls(true);
   }
 
@@ -350,6 +355,7 @@ class Game {
     const order = ['behind', 'high', 'landing'];
     this.aimView = order[(order.indexOf(this.aimView) + 1) % order.length];
     this.hud.setCamTag(this.aimView === 'behind' ? '' : this.aimView === 'high' ? 'OVERHEAD VIEW' : 'LANDING VIEW');
+    this.applyAimFov();
     this.audio.click();
   }
   toggleCam() { this.camMode = this.camMode === 'pov' ? 'chase' : 'pov'; this.hud.message(this.camMode === 'pov' ? 'First-person camera' : 'Ball camera', 1200); }
@@ -539,10 +545,10 @@ class Game {
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (pinch && pointers.size >= 2) { if (this.state === 'aim') this.setAimZoom(pinch.z0 * pinchDist() / Math.max(1, pinch.d0)); return; }
+      if (pinch && pointers.size >= 2) { this.setAimZoom(pinch.z0 * pinchDist() / Math.max(1, pinch.d0)); return; }
       if (!dragging || this.state !== 'aim') return;
       const dx = e.clientX - lx; lx = e.clientX;
-      const fine = 1 / this.aimZoom; // zoomed in, the same finger travel turns the aim less
+      const fine = 1 / this.effectiveZoom(); // zoomed in (landing view), the same finger travel turns the aim less
       if (drag && drag.putt) {
         // pull back for pace, slide sideways for the line; each drag adjusts from where the last one left off
         const pull = e.clientY - drag.sy, side = e.clientX - drag.sx;
@@ -560,10 +566,10 @@ class Game {
     this.canvas.addEventListener('pointerup', release);
     this.canvas.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); pinch = null; dragging = false; drag = null; });
     window.addEventListener('blur', () => { this.keys = {}; dragging = false; pointers.clear(); pinch = null; });
-    // wheel zooms the aim view; with shift (or outside aiming) it changes club as before
+    // wheel zooms the landing view; elsewhere (or with shift) it changes club as before
     let wheelAcc = 0;
     this.canvas.addEventListener('wheel', (e) => {
-      if (this.state === 'aim' && !e.shiftKey) { this.setAimZoom(this.aimZoom * Math.exp(-e.deltaY * 0.0022)); return; }
+      if (this.zoomActive() && !e.shiftKey) { this.setAimZoom(this.aimZoom * Math.exp(-e.deltaY * 0.0022)); return; }
       wheelAcc += e.deltaY; if (Math.abs(wheelAcc) >= 60) { this.changeClub(wheelAcc > 0 ? 1 : -1); wheelAcc = 0; }
     }, { passive: true });
     window.addEventListener('keydown', (e) => {
@@ -578,8 +584,8 @@ class Game {
         case 'KeyE': case 'ArrowDown': this.changeClub(1); break;
         case 'KeyC': this.toggleCam(); break;
         case 'KeyV': this.cycleView(); break;
-        case 'KeyZ': if (this.state === 'aim') this.setAimZoom(this.aimZoom * 1.25); break;
-        case 'KeyX': if (this.state === 'aim') this.setAimZoom(this.aimZoom / 1.25); break;
+        case 'KeyZ': this.setAimZoom(this.aimZoom * 1.25); break;
+        case 'KeyX': this.setAimZoom(this.aimZoom / 1.25); break;
         case 'KeyW': if (this.state === 'aim') { this.planPower = clamp(this.planPower + 0.05, 0.08, 1); this.previewDirty = true; } break;
         case 'KeyS': if (this.state === 'aim') { this.planPower = clamp(this.planPower - 0.05, 0.08, 1); this.previewDirty = true; } break;
         case 'KeyR': this.restart(); break;
@@ -740,7 +746,7 @@ class Game {
 
   updateAim(dt) {
     const rot = (this.keys.ArrowLeft || this.keys.KeyA ? 1 : 0) - (this.keys.ArrowRight || this.keys.KeyD ? 1 : 0);
-    if (rot) { this.aimYaw += rot * dt * 0.55 / this.aimZoom; this.previewDirty = true; if (this.club.putter) this.placePutterRig(); }
+    if (rot) { this.aimYaw += rot * dt * 0.55 / this.effectiveZoom(); this.previewDirty = true; if (this.club.putter) this.placePutterRig(); }
     if (this.previewDirty) { this.previewNext = (this.previewNext || 0); if (this.time >= this.previewNext) { this.updatePreview(); this.previewNext = this.time + 0.06; } }
     const p = this.aimPose();
     this.camera.position.lerp(p.pos, 1 - Math.exp(-dt * 10));

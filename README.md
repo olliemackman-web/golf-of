@@ -18,9 +18,8 @@ npm start          # python3 -m http.server 8765, reachable from the LAN
 Then open http://localhost:8765, or `http://<this-machine's-LAN-IP>:8765` on a
 phone on the same Wi-Fi.
 
-To play it on a phone with no computer running, enable GitHub Pages once
-(repo **Settings → Pages → Source: GitHub Actions**). Every push to `main` then
-publishes the game via `.github/workflows/pages.yml`.
+The game is published on GitHub Pages at https://olliemackman-web.github.io/golf-of/ —
+every push to `main` redeploys it via `.github/workflows/pages.yml`.
 
 ## Develop
 
@@ -55,12 +54,12 @@ Pick or create a player on the start screen. Profiles live in the browser's loca
 | Action | Desktop | Touch |
 | --- | --- | --- |
 | Aim | mouse drag / ← → | drag |
-| Zoom the aim view (up to 5×; aiming gets finer to match) | wheel, Z / X | pinch, ZOOM button |
+| Zoom the landing view (up to 5×; aiming gets finer to match) | wheel, Z / X | pinch, ZOOM button |
 | Aim view (behind → overhead → landing) | V | VIEW |
 | Ball spin pad | B | SPIN |
 | Pro shop | U | SHOP |
 | Target power (moves the landing ring, marks the meter) | W / S | slider |
-| Club | Q / E, shift + wheel | ◀ ▶ |
+| Club | Q / E, wheel (shift + wheel in landing view) | ◀ ▶ |
 | Swing: start, stop the power bar, then strike when the accuracy marker is in the green (it ping-pongs until you press) | Space ×3 | SWING ×3 |
 | Putt: drag back for pace, left/right for line (the dashed line turns green when it drops); lift off and adjust as often as you like, then PUTT, then strike in the green | mouse drag, Space | touch drag, PUTT |
 | Ball camera | C | CAM |
