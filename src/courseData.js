@@ -508,6 +508,26 @@ export function surfaceWeights(L, x, z) {
   return { fairway, green, sand, water, tee };
 }
 
+/**
+ * How much of the ground at (x, z) is unmown native grass (0..1): the tall golden fescue that grows
+ * beyond the rough. Looks only — the ball still plays it as rough. Patchy, and kept clear of the
+ * tee, the green and the bunkers.
+ */
+export function fescueWeight(L, x, z) {
+  if (L.space) return 0;
+  const { d } = splineDist(L, x, z);
+  const hw = L.halfWidth || 16;
+  let w = smoothstep(hw + 7, hw + 17, d);
+  if (w <= 0) return 0;
+  w *= smoothstep(26, 44, Math.hypot(x - L.green.x, z - L.green.z));
+  w *= smoothstep(16, 30, Math.hypot(x - L.tee.x, z - L.tee.z));
+  for (const b of L.bunkers) w *= smoothstep(1.6, 3.2, ellipseDist(x, z, b));
+  for (const q of ponds(L)) w *= smoothstep(1.15, 1.6, ellipseDist(x, z, q));
+  // drifts of fescue between patches of ordinary rough
+  const n = fbm(x / 46 + 11 + L.seed * 0.01, z / 46 - 5, 3) * 0.5 + 0.5;
+  return w * smoothstep(0.3, 0.5, n);
+}
+
 export class Course {
   constructor(layout) {
     const L = this.layout = layout;

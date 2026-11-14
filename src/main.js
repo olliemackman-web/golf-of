@@ -15,6 +15,7 @@ import { buildAsteroids } from './space.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
 import { GameAudio } from './audio.js';
+import { Effects } from './effects.js';
 import { ProfileStore, coinsFor, UPGRADES } from './profile.js';
 import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
@@ -22,6 +23,7 @@ import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 const UP = new THREE.Vector3(0, 1, 0);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.75, T_ACC_PUTT = 0.9;
+const TEE_H = 0.028; // how far a teed ball sits above the turf
 const ZOOM_MAX = 5, ZOOM_STEPS = [1, 1.6, 2.5, 4];
 import { ACC_BANDS } from './hud.js';
 
@@ -62,7 +64,7 @@ class Game {
     const small = Math.min(window.innerWidth, window.innerHeight) < 600 || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
     this.isMobile = coarse || small;
     this.quality = this.isMobile
-      ? { dpr: Math.min(window.devicePixelRatio, 1.5), shadow: 2048, shadowRange: 70, bloom: false, msaa: 0, veg: { cardsBroad: 34, cardsConifer: 44, tufts: 18000, reeds: 3500, aa: true } }
+      ? { dpr: Math.min(window.devicePixelRatio, 1.5), shadow: 2048, shadowRange: 70, bloom: false, msaa: 0, veg: { cardsBroad: 44, cardsConifer: 44, tufts: 18000, reeds: 3500, aa: true } }
       : { dpr: Math.min(window.devicePixelRatio, 1.75), shadow: 4096, shadowRange: 95, bloom: true, msaa: 4, veg: { aa: true } };
     // antialias on for both tiers: on phones the default framebuffer MSAA is nearly free and it is what
     // stops the foliage and grass edges shimmering; alpha-to-coverage rides on it.
@@ -73,7 +75,7 @@ class Game {
     r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.12;
     const scene = this.scene = new THREE.Scene();
     // fog colour matches the sky dome at the horizon so distant trees and hills melt into it
-    scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.00054);
+    scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.0008);
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.05, 6000);
     this.lookDir = new THREE.Vector3(0, 0, 1);
 
@@ -133,6 +135,13 @@ class Game {
     this.landRing.rotation.x = -Math.PI / 2; this.landRing.renderOrder = 21; scene.add(this.landRing);
 
     this.golfer = new Golfer(); this.golfer.group.visible = false; scene.add(this.golfer.group);
+    // tee peg under the ball for the first shot of each hole
+    const pegMat = new THREE.MeshStandardMaterial({ color: 0xf2ead6, roughness: 0.6 });
+    this.peg = new THREE.Group();
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.0034, 0.0014, 0.05, 8), pegMat); stem.position.y = -0.025; this.peg.add(stem);
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.0075, 0.0034, 0.007, 10), pegMat); cup.position.y = -0.0035; this.peg.add(cup);
+    this.peg.visible = false; scene.add(this.peg);
+    this.fx = new Effects(scene); this.fx.ground = (x, z) => this.groundY(x, z);
 
     // post
     if (this.quality.bloom) {
@@ -144,7 +153,7 @@ class Game {
       this.composer.addPass(new OutputPass());
       // final grade: a touch more saturation and contrast, and a soft vignette to frame the view
       this.composer.addPass(new ShaderPass({
-        uniforms: { tDiffuse: { value: null }, uVignette: { value: 0.3 }, uSat: { value: 1.08 }, uContrast: { value: 1.05 } },
+        uniforms: { tDiffuse: { value: null }, uVignette: { value: 0.3 }, uSat: { value: 1.03 }, uContrast: { value: 1.05 } },
         vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
         fragmentShader: `uniform sampler2D tDiffuse; uniform float uVignette, uSat, uContrast; varying vec2 vUv;
           void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
@@ -190,7 +199,7 @@ class Game {
       const shared = new Set(Object.values(this.tex));
       this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.map && !shared.has(m.map)) m.map.dispose(); if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
-      if (this.terrain) { this.terrain.maskTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
+      if (this.terrain) { this.terrain.maskTex.dispose(); this.terrain.zoneTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
     }
     progress('SHAPING THE LAND…'); await this.frame();
     this.holeIndex = n;
@@ -224,7 +233,7 @@ class Game {
   applyAtmosphere(space) {
     this.envMap = this.skyCtl.setSpace(space);
     this.scene.fog.color.set(space ? 0x000000 : HORIZON);
-    this.scene.fog.density = space ? 0.0011 : 0.00054;
+    this.scene.fog.density = space ? 0.0011 : 0.0008;
     this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.62;
     this.sun.color.set(space ? 0xfff6ea : 0xffe7c4); this.sun.intensity = space ? 3.4 : 3.1;
     if (this.clouds) this.clouds.visible = !space;
@@ -259,6 +268,7 @@ class Game {
   newHole() {
     this.strokes = 1; this.penalties = 0; this.endShown = false;
     this.ball.place(this.L.tee.x, this.L.tee.z);
+    this.teed = true; this.peg.visible = true;
     this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
     this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
     this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN'); this.aimZoom = 1; this.hud.setZoomLabel(1);
@@ -526,7 +536,12 @@ class Game {
     const look = new THREE.Vector3(b.x, b.y, b.z).addScaledVector(dir, 28).addScaledVector(right, 0.5).add(new THREE.Vector3(0, 0.6, 0));
     return { pos, look };
   }
-  syncBallMesh() { this.ballMesh.position.set(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z); }
+  syncBallMesh() {
+    const p = this.ball.pos, t = this.L.tee;
+    if (this.teed && Math.hypot(p.x - t.x, p.z - t.z) > 0.5) { this.teed = false; this.peg.visible = false; } // moved off the tee by hand
+    this.ballMesh.position.set(p.x, p.y + (this.teed ? TEE_H : 0), p.z);
+    if (this.teed) this.peg.position.set(p.x, p.y - BALL_R + TEE_H, p.z);
+  }
 
   updatePreview() {
     const dir = this.aimDir();
@@ -760,6 +775,13 @@ class Game {
     this.ball.wind.x = this.windBase.x; this.ball.wind.z = this.windBase.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z }; this.shotAim = this.aimDir();
+    // off the peg or through the turf: the ball leaves its tee, an iron takes a divot, a bunker shot throws sand
+    const wasTeed = this.teed; this.teed = false;
+    if (!this.club.putter) {
+      const bp = this.ball.pos, fxp = { x: bp.x, y: bp.y - BALL_R, z: bp.z };
+      if (lie === SURF.SAND) this.fx.sand(fxp, dir, s.power);
+      else if (!wasTeed || !this.club.wood) this.fx.turf(fxp, dir, s.power * (wasTeed ? 0.5 : 1));
+    }
     this.lockShot = null;
     if (this.holeLock) {
       // code 1111: replace the physics with a guided path from here to the cup
@@ -789,6 +811,7 @@ class Game {
     if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
     this.ribbonMat.uniforms.uTime.value = this.time;
+    this.fx.update(dt, this.camera, this.renderer.domElement.height);
     const aimDir = this.aimDir();
     // dial: wind relative to the aim line, + = blowing toward the player's right
     { const wb = this.windBase; const along = wb.x * aimDir.x + wb.z * aimDir.z, lateral = -wb.x * aimDir.z + wb.z * aimDir.x; this.hud.setWind(wb.speed, Math.atan2(lateral, along)); }
@@ -889,8 +912,8 @@ class Game {
     if (this.lockShot) this.stepLockShot(dt);
     else this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
     for (const ev of this.ball.events) {
-      if (ev.type === 'bounce') { this.audio.bounce(ev.speed); }
-      else if (ev.type === 'tree') { this.audio.tree(); this.hud.message('Off the trees!', 1600, 'bad'); }
+      if (ev.type === 'bounce') { this.audio.bounce(ev.speed); this.fx.puff({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }, ev.surface === SURF.SAND ? 'sand' : 'turf', ev.surface === SURF.GREEN ? ev.speed * 0.35 : ev.speed); }
+      else if (ev.type === 'tree') { this.audio.tree(); this.fx.leaves(this.ball.pos); this.hud.message('Off the trees!', 1600, 'bad'); }
       else if (ev.type === 'lipout') { this.hud.message('Lip out!', 1500, 'bad'); }
     }
     this.ball.events.length = 0;
@@ -997,7 +1020,7 @@ class Game {
     this.state = 'settle'; this.settleT = 0;
     const dist = Math.hypot(b.pos.x - this.shotStart.x, b.pos.z - this.shotStart.z);
     if (b.mode === 'water' && this.course.voidLevel != null) { this.hud.message('Lost in the void — one-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
-    else if (b.mode === 'water') { this.audio.splash(); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
+    else if (b.mode === 'water') { this.audio.splash(); this.fx.splash(b.pos, this.course.waterLevelAt(b.pos.x, b.pos.z)); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
     else if (b.mode === 'oob') { this.hud.message('Out of bounds — penalty, replay', 2600, 'bad'); this.penalty = 'oob'; }
     else {
       this.penalty = null;
@@ -1021,7 +1044,7 @@ class Game {
       this.strokes += 1; this.penalties += 1;
       this.ball.place(this.lastPos.x, this.lastPos.z);
     } else { this.ball.mode = 'rest'; this.ball.pos.y = this.course.heightAt(this.ball.pos.x, this.ball.pos.z) + BALL_R; }
-    this.strokes += 1;
+    this.strokes += 1; this.peg.visible = false;
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.syncBallMesh();
     this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN');
