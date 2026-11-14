@@ -47,7 +47,7 @@ club, `npm run fuzz` fires 220 random shots on every hole (`COURSE=1` for Gosfie
 
 ## Progression
 
-Pick or create a player on the start screen. Profiles live in the browser's localStorage, which is per browser *and per site address*: open the game from a different link (a new preview URL, the LAN IP instead of localhost, a home-screen app instead of a tab) and it starts empty. The ⧉ button on a player card copies a player code; paste it into the name box anywhere to bring that player across. The pro shop has a coupon box. Each hole pays coins by result — ace 50, eagle 25, birdie 10, par 5, bogey 3, double 2, worse 1 — spent in the PRO SHOP (aim view or the hole-out card) on five upgrade tracks: driver & woods, irons & wedges, forgiveness, putting, spin control (five levels each, 10/20/35/55/80 coins). Upgrades and best round carry across games. The SPIN button (B) opens a pad for draw/fade and back/top spin; spin never changes the carry, only the shape and what the ball does when it lands (full backspin sits, full topspin runs on). It is shown live on the aim line and resets after each shot. Upgrades are +10% clubhead speed per level.
+Pick or create a player on the start screen. Profiles live in the browser's localStorage, which is per browser *and per site address*: open the game from a different link (a new preview URL, the LAN IP instead of localhost, a home-screen app instead of a tab) and it starts empty. The copy button on a player card copies a player code; paste it into the name box anywhere to bring that player across. The pro shop has a coupon box. Each hole pays coins by result — ace 50, eagle 25, birdie 10, par 5, bogey 3, double 2, worse 1 — spent in the PRO SHOP (aim view or the hole-out card) on five upgrade tracks: driver & woods, irons & wedges, forgiveness, putting, spin control (five levels each, 10/20/35/55/80 coins). Upgrades and best round carry across games. The SPIN button (B) opens a pad for draw/fade and back/top spin; spin never changes the carry, only the shape and what the ball does when it lands (full backspin sits, full topspin runs on). It is shown live on the aim line and resets after each shot. Upgrades are +10% clubhead speed per level.
 
 ## Controls
 
@@ -59,8 +59,8 @@ Pick or create a player on the start screen. Profiles live in the browser's loca
 | Ball spin pad | B | SPIN |
 | Pro shop | U | SHOP |
 | Target power (moves the landing ring, marks the meter) | W / S | slider |
-| Club | Q / E, wheel (shift + wheel in landing view) | ◀ ▶ |
-| Swing: start, stop the power bar, then strike when the accuracy marker is in the green (it ping-pongs until you press) | Space ×3 | SWING ×3 |
+| Club | Q / E, wheel (shift + wheel in landing view) | ‹ › on the club card |
+| Swing: start, stop the power bar, then strike when the accuracy marker is in the gold (it ping-pongs until you press) | Space ×3 | SWING ×3 |
 | Putt: drag back for pace, left/right for line (the dashed line turns green when it drops); lift off and adjust as often as you like, then PUTT, then strike in the green | mouse drag, Space | touch drag, PUTT |
 | Ball camera | C | CAM |
 | Restart hole | R | — |
@@ -73,6 +73,7 @@ Pick or create a player on the start screen. Profiles live in the browser's loca
 - `src/vegetation.js` — instanced trees (trunks + leaf cards), grass tufts, reeds, tree collisions.
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
 - `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.
+- `styles.css` — all of the interface styling: design tokens at the top (pine glass panels, ivory type, one lime accent), then the HUD, the overlay panels and scorecard, the modals, and the phone layouts. `src/hud.js` builds the HUD markup and draws the minimap.
 - `src/space.js` — Starfall set dressing (the drifting asteroid field); the starfield sky, rock island sides and void live in `terrain.js` behind `uSpace` / `TERRAIN_SPACE`.
 - `src/main.js` — game states, cameras, input, HUD wiring. `window.__game.step(sec)` advances the sim by hand for debugging; `__game.paused = true` stops the loop.
 - `tools/test.mjs` — the `npm run check` suite; `tools/smoke.mjs` — the headless browser boot test.
