@@ -210,6 +210,8 @@ export class Hud {
     const m = this.el.msg; m.textContent = text; m.className = 'msg show ' + cls;
     clearTimeout(this.msgTimer); if (ms > 0) this.msgTimer = setTimeout(() => { m.className = 'msg'; }, ms);
   }
+  /** Code 1111 armed: the pin chip lights up until the shot is struck. */
+  setLock(on) { const chip = this.el.topin.parentElement; chip.classList.toggle('locked', on); chip.lastElementChild.textContent = on ? 'locked on' : 'to pin'; }
   clearMessage() { clearTimeout(this.msgTimer); this.el.msg.className = 'msg'; }
   showMeter(show) { this.el.meter.style.opacity = show ? 1 : 0; }
   showAccuracy(show) { this.el.abar.style.opacity = show ? 1 : 0; }

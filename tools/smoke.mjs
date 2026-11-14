@@ -162,6 +162,19 @@ try {
   if (!(redo.strokes === 1 && redo.atTee && redo.kept && redo.state === 'aim' && !redo.modal)) errors.push(`code 2430 did not redo the hole cleanly: ${JSON.stringify(redo)}`);
   console.log(`code 2430: stroke ${redo.strokes}, ball on the tee ${redo.atTee}, other holes kept ${redo.kept}`);
 
+  // Code 1111 locks on: the next shot from the tee, deliberately aimed well off line, is a hole in one.
+  const ace = await page.evaluate(() => {
+    const g = window.__game; g.newHole(); g.enterAim(); g.aimYaw += 0.6; g.previewDirty = true;
+    g.openShop(); document.getElementById('coupon').value = '1111'; document.getElementById('redeem').click(); g.step(0.2);
+    const armed = { lock: g.holeLock, modal: g.menus.open, chip: document.querySelector('.chip.pin').textContent };
+    g.enterAddress(); g.step(1.2); g.armSwing(); const s = g.swing; s.phase = 'acc'; s.pos = 0.9; s.power = 0.4; g.state = 'swing'; g.strike(); g.step(12);
+    const out = { armed, state: g.state, name: g.finalName, strokes: g.finalTotal, lockAfter: g.holeLock, coins: g.holeCoins };
+    g.redoHole(); g.step(0.2); return out;
+  });
+  if (!(ace.armed.lock && !ace.armed.modal && /locked on/.test(ace.armed.chip))) errors.push(`code 1111 did not arm the lock: ${JSON.stringify(ace.armed)}`);
+  if (!(ace.state === 'holed' && ace.strokes === 1 && ace.name === 'HOLE IN ONE!' && !ace.lockAfter)) errors.push(`code 1111 did not hole the next shot: ${JSON.stringify(ace)}`);
+  console.log(`code 1111: armed ${ace.armed.lock}, next shot -> ${ace.name} (${ace.strokes} stroke, +${ace.coins} coins), lock cleared ${!ace.lockAfter}`);
+
   // Full shot: ball cam takes over on launch, and the accuracy label reads as a band.
   const full = await page.evaluate(() => {
     const g = window.__game; g.newHole(); g.enterAim(); g.step(0.2); g.enterAddress(); g.step(1.2); g.action(); g.step(0.5); g.action(); g.step(0.3);

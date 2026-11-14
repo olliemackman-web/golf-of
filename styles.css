@@ -90,6 +90,8 @@ b { font-weight: 700; }
 .chip svg { width: 13px; height: 13px; flex: none; }
 .chip.pin b { color: var(--lime); font-size: 13px; }
 .chip.pin svg { color: var(--coral); }
+.chip.pin.locked { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(201, 255, 91, .22); }
+.chip.pin.locked i { color: var(--lime); font-weight: 700; }
 .chip.lie { text-transform: uppercase; letter-spacing: .1em; font-size: 10px; font-weight: 700; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; background: #4d8a3a; box-shadow: 0 0 0 1px rgba(255, 255, 255, .25); }
 .lie-rough .swatch { background: #2f6a2a; }

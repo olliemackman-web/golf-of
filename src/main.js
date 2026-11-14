@@ -262,6 +262,7 @@ class Game {
     this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
     this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
     this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN'); this.aimZoom = 1; this.hud.setZoomLabel(1);
+    this.holeLock = false; this.lockShot = null; this.hud.setLock(false);
     this.hud.setCamTag('');
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     const wa = this.rnd() * Math.PI * 2, ws = 0.8 + this.rnd() * 4.5;
@@ -651,7 +652,15 @@ class Game {
 
   /** Codes the pro shop passes on when the player store does not know them. Returns {msg, close} or null. */
   redeemCode(code) {
-    if (String(code).trim() !== '2430') return null;
+    code = String(code).trim();
+    if (code === '1111') {
+      // lock on: the next shot struck flies (or rolls) straight into the cup, wherever it was aimed
+      if (this.state !== 'aim') return { msg: 'Redeem this while aiming a shot.' };
+      this.holeLock = true; this.hud.setLock(true);
+      this.hud.message('Locked on to the hole · your next shot goes in', 2600, 'good');
+      return { msg: 'Locked on.', close: true };
+    }
+    if (code !== '2430') return null;
     if (this.state !== 'aim' && this.state !== 'holed') return { msg: 'Finish the shot first, then redeem.' };
     this.redoHole();
     return { msg: 'Hole restarted.', close: true };
@@ -751,6 +760,13 @@ class Game {
     this.ball.wind.x = this.windBase.x; this.ball.wind.z = this.windBase.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z }; this.shotAim = this.aimDir();
+    this.lockShot = null;
+    if (this.holeLock) {
+      // code 1111: replace the physics with a guided path from here to the cup
+      const b = this.ball.pos, pin = this.L.pin, dist = Math.hypot(pin.x - b.x, pin.z - b.z), putt = !!this.club.putter;
+      this.lockShot = { t: 0, x0: b.x, y0: b.y, z0: b.z, putt, dur: putt ? clamp(dist / 2.5, 0.8, 3.5) : clamp(dist / 36, 1.4, 6.5), apex: putt ? 0 : clamp(dist * 0.2, 1.5, 45) };
+      this.holeLock = false; this.hud.setLock(false);
+    }
     this.audio.hit(s.power, this.club);
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
     // every full shot is followed on the ball cam; C flips back to the eyes mid-flight. Putts stay at eye level.
@@ -870,7 +886,8 @@ class Game {
 
   updateFlight(dt) {
     this.flightT += dt;
-    this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
+    if (this.lockShot) this.stepLockShot(dt);
+    else this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
     for (const ev of this.ball.events) {
       if (ev.type === 'bounce') { this.audio.bounce(ev.speed); }
       else if (ev.type === 'tree') { this.audio.tree(); this.hud.message('Off the trees!', 1600, 'bad'); }
@@ -903,6 +920,19 @@ class Game {
     this.updateFlightCamera(dt);
 
     if (this.ball.mode === 'rest' || this.ball.mode === 'water' || this.ball.mode === 'oob' || this.ball.mode === 'holed') this.onShotEnd();
+  }
+
+  /** Code 1111: carry the ball along an arc (a roll, for a putt) that ends in the cup. */
+  stepLockShot(dt) {
+    const k = this.lockShot, b = this.ball, pin = this.L.pin, px = b.pos.x, py = b.pos.y, pz = b.pos.z;
+    k.t = Math.min(1, k.t + dt / k.dur);
+    const u = k.putt ? 1 - (1 - k.t) * (1 - k.t) : k.t; // a putt slows as it reaches the cup
+    b.pos.x = lerp(k.x0, pin.x, u); b.pos.z = lerp(k.z0, pin.z, u);
+    const ground = this.course.heightAt(b.pos.x, b.pos.z) + BALL_R;
+    b.pos.y = k.putt ? ground : Math.max(ground, lerp(k.y0, this.course.heightAt(pin.x, pin.z) + BALL_R, u) + k.apex * 4 * u * (1 - u));
+    if (dt > 0) { b.vel.x = (b.pos.x - px) / dt; b.vel.y = (b.pos.y - py) / dt; b.vel.z = (b.pos.z - pz) / dt; }
+    b.mode = k.putt ? 'roll' : 'fly';
+    if (k.t >= 1) { b.pos.x = pin.x; b.pos.z = pin.z; b.vel.x = b.vel.y = b.vel.z = 0; b.mode = 'holed'; this.lockShot = null; }
   }
 
   updateFlightCamera(dt) {
