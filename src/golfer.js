@@ -97,7 +97,8 @@ export class Golfer {
     }
     // arms
     this.upperL = cylBetween(0.052, 0.045, shirt); this.upperR = cylBetween(0.052, 0.045, shirt);
-    this.foreL = cylBetween(0.045, 0.036, skin); this.foreR = cylBetween(0.045, 0.036, skin);
+    // long sleeves: bare forearms read as featureless tubes from the golfer's own eyes
+    this.foreL = cylBetween(0.047, 0.035, shirt); this.foreR = cylBetween(0.047, 0.035, shirt);
     this.elbowL = new THREE.Mesh(new THREE.SphereGeometry(0.046, 12, 8), shirt); this.elbowR = this.elbowL.clone();
     this.handL = new THREE.Mesh(new THREE.SphereGeometry(0.048, 14, 10), glove); this.handL.scale.set(0.8, 1.1, 0.75);
     this.handR = new THREE.Mesh(new THREE.SphereGeometry(0.048, 14, 10), skin); this.handR.scale.set(0.8, 1.1, 0.75);

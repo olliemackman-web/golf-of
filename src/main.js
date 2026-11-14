@@ -4,6 +4,9 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
 import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
@@ -17,9 +20,28 @@ import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.75, T_ACC_PUTT = 0.9;
 const ZOOM_MAX = 5, ZOOM_STEPS = [1, 1.6, 2.5, 4];
 import { ACC_BANDS } from './hud.js';
+
+/** A screen-space-width line over a fixed buffer of `maxPts` points; fill it with writeFatLine. */
+function fatLine(maxPts, opts, geo = null) {
+  if (!geo) { geo = new LineGeometry(); geo.setPositions(new Float32Array(maxPts * 3)); geo.instanceCount = 0; }
+  const line = new Line2(geo, new LineMaterial(opts)); line.frustumCulled = false; line.visible = false;
+  return line;
+}
+/** Write n points into a fatLine's buffer; get(i, out) fills out[0..2] with point i. */
+const _fp = [0, 0, 0];
+function writeFatLine(geo, n, get) {
+  const data = geo.attributes.instanceStart.data, arr = data.array;
+  for (let i = 0; i < n; i++) {
+    get(i, _fp);
+    if (i < n - 1) { arr[i * 6] = _fp[0]; arr[i * 6 + 1] = _fp[1]; arr[i * 6 + 2] = _fp[2]; }
+    if (i > 0) { arr[i * 6 - 3] = _fp[0]; arr[i * 6 - 2] = _fp[1]; arr[i * 6 - 1] = _fp[2]; }
+  }
+  geo.instanceCount = Math.max(0, n - 1); data.needsUpdate = true;
+}
 
 class Game {
   constructor() {
@@ -48,7 +70,7 @@ class Game {
     r.setPixelRatio(this.quality.dpr);
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.0;
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.12;
     const scene = this.scene = new THREE.Scene();
     // fog colour matches the sky dome at the horizon so distant trees and hills melt into it
     scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.00054);
@@ -70,7 +92,7 @@ class Game {
     const sc = sun.shadow.camera; sc.near = 1; sc.far = 700; sc.left = -sr; sc.right = sr; sc.top = sr; sc.bottom = -sr;
     sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.5; sun.shadow.radius = 2;
     scene.add(sun); scene.add(sun.target);
-    this.hemi = new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.5); scene.add(this.hemi);
+    this.hemi = new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.62); scene.add(this.hemi);
     if (this.spaceMode) this.applyAtmosphere(true); // the first hole may already be a Starfall hole
 
     // ball
@@ -79,17 +101,18 @@ class Game {
     this.blob = new THREE.Mesh(new THREE.CircleGeometry(1, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4, depthWrite: false }));
     this.blob.rotation.x = -Math.PI / 2; this.blob.renderOrder = 3; scene.add(this.blob);
     this.ball = new Ball(this.course); this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin;
-    // faint trail so the ball reads against a bright sky
-    this.trailN = 40; this.trailPts = [];
-    const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.trailN * 3), 3));
-    const tc = new Float32Array(this.trailN * 3); for (let i = 0; i < this.trailN; i++) { const a = i / this.trailN; tc[i * 3] = tc[i * 3 + 1] = tc[i * 3 + 2] = a; }
-    tg.setAttribute('color', new THREE.BufferAttribute(tc, 3));
-    this.trail = new THREE.Line(tg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8, depthTest: true }));
-    this.trail.frustumCulled = false; this.trail.visible = false; scene.add(this.trail);
+    // shot tracer: a glowing tail behind the ball that fades out along its length
+    this.trailN = 150; this.trailPts = [];
+    this.trail = fatLine(this.trailN, { color: 0xfff1d0, linewidth: 3.5, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const tc = new Float32Array(this.trailN * 3); for (let i = 0; i < this.trailN; i++) { const a = Math.pow(i / (this.trailN - 1), 1.6); tc[i * 3] = tc[i * 3 + 1] = tc[i * 3 + 2] = a; }
+    this.trail.geometry.setColors(tc);
+    scene.add(this.trail);
 
-    // preview
-    this.previewLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new Array(900).fill(0).map(() => new THREE.Vector3())), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthTest: false }));
-    this.previewLine.renderOrder = 20; this.previewLine.frustumCulled = false; scene.add(this.previewLine);
+    // aim preview: a white arc with a soft dark edge so it reads against both sky and turf
+    this.previewLine = fatLine(900, { color: 0xffffff, linewidth: 2.6, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false });
+    this.previewLine.renderOrder = 20; scene.add(this.previewLine);
+    this.previewEdge = fatLine(900, { color: 0x06120c, linewidth: 5.5, transparent: true, opacity: 0.3, depthTest: false, depthWrite: false }, this.previewLine.geometry);
+    this.previewEdge.renderOrder = 19; scene.add(this.previewEdge);
     // Putting: a dashed glowing ribbon laid on the green, green when the putt drops.
     const rgeo = new THREE.BufferGeometry();
     rgeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(900 * 2 * 3), 3));
@@ -202,7 +225,7 @@ class Game {
     this.envMap = this.skyCtl.setSpace(space);
     this.scene.fog.color.set(space ? 0x000000 : HORIZON);
     this.scene.fog.density = space ? 0.0011 : 0.00054;
-    this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.5;
+    this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.62;
     this.sun.color.set(space ? 0xfff6ea : 0xffe7c4); this.sun.intensity = space ? 3.4 : 3.1;
     if (this.clouds) this.clouds.visible = !space;
   }
@@ -247,7 +270,13 @@ class Game {
     this.autoClub(); this.solvePlan();
     this.camMode = 'pov';
     this.syncBallMesh();
-    this.hud.setStroke(1); this.updateLieHud();
+    this.hud.setStroke(1); this.updateLieHud(); this.updateRoundHud();
+  }
+
+  /** Round score to par over the holes finished so far, shown in the hole card. */
+  updateRoundHud() {
+    const played = this.scores.filter(Boolean);
+    this.hud.setRound(played.reduce((a, s) => a + s.strokes - s.par, 0), played.length);
   }
 
   showTitle() {
@@ -330,9 +359,14 @@ class Game {
     this.hud.setCamTag('');
     this.updateLieHud();
     this.previewDirty = true;
-    if (this.club.putter) this.hud.setHint('<b>DRAG BACK</b> for pace, <b>LEFT / RIGHT</b> for line &nbsp; <b>W / S</b> fine-tune pace &nbsp; <b>SPACE</b> putt when ready');
-    else this.hud.setHint('<b>DRAG / ← →</b> aim &nbsp; <b>V</b> view (landing view zooms: wheel / Z X) &nbsp; <b>Q / E</b> club &nbsp; <b>W / S</b> target power &nbsp; <b>SPACE</b> address the ball');
+    this.setAimHint();
     this.hud.setSwingLabel(this.club.putter ? 'PUTT' : 'ADDRESS'); this.hud.setAimControls(true);
+  }
+
+  /** Keyboard hints for the aim view in use. */
+  setAimHint() {
+    if (this.club.putter) this.hud.setHint('<b>DRAG</b> back for pace, sideways for line <b>W / S</b> fine pace <b>SPACE</b> putt');
+    else this.hud.setHint(this.aimView === 'landing' ? '<b>DRAG</b> aim <b>WHEEL</b> zoom <b>V</b> view <b>Q / E</b> club <b>W / S</b> power <b>SPACE</b> address' : '<b>DRAG</b> aim <b>V</b> view <b>Q / E</b> club <b>W / S</b> power <b>B</b> spin <b>SPACE</b> address');
   }
 
   /** Putting aim shows the arms and putter behind the ball, following the line as it is aimed. */
@@ -347,7 +381,7 @@ class Game {
   commitPutt() {
     if (this.state !== 'aim' || !this.club.putter) return;
     this.placePutterRig();
-    this.previewLine.visible = false; this.landRing.visible = false;
+    this.previewLine.visible = this.previewEdge.visible = false; this.landRing.visible = false;
     this.hud.setAimControls(false); this.hud.setCamTag('');
     const to = this.addressCamPose({ pos: new THREE.Vector3(), look: new THREE.Vector3() });
     this.camera.position.copy(to.pos); this.lookDir.subVectors(to.look, to.pos).normalize(); this.setLook();
@@ -359,7 +393,7 @@ class Game {
     const order = ['behind', 'high', 'landing'];
     this.aimView = order[(order.indexOf(this.aimView) + 1) % order.length];
     this.hud.setCamTag(this.aimView === 'behind' ? '' : this.aimView === 'high' ? 'OVERHEAD VIEW' : 'LANDING VIEW');
-    this.applyAimFov();
+    this.applyAimFov(); this.setAimHint();
     this.audio.click();
   }
   toggleCam() { this.camMode = this.camMode === 'pov' ? 'chase' : 'pov'; this.hud.message(this.camMode === 'pov' ? 'First-person camera' : 'Ball camera', 1200); }
@@ -383,7 +417,7 @@ class Game {
     if (quick) { this.hud.showMeter(true); this.swingPress(); return; }
     this.hud.showMeter(true);
     this.hud.meter({ label: 'POWER', fill: 0, marker: null, set: this.planPower < 1 ? this.planPower : null });
-    this.hud.setHint('<b>SPACE</b> start swing &nbsp;·&nbsp; <b>ESC</b> back');
+    this.hud.setHint('<b>SPACE</b> start swing <b>ESC</b> back');
     this.hud.setSwingLabel('SWING');
   }
 
@@ -499,20 +533,18 @@ class Game {
     const params = shotParams(this.club, this.planPower, 0, lie, this.mods());
     const from = { x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z };
     const res = simulateShot(this.course, from, { x: dir.x, z: dir.z }, params, { wind: this.windBase, trees: this.trees, hole: this.L.pin, maxT: 30 });
-    const pts = res.path; const g = this.previewLine.geometry; const arr = g.attributes.position.array;
-    const n = Math.min(pts.length, 900);
-    for (let i = 0; i < n; i++) { arr[i * 3] = pts[i].x; arr[i * 3 + 1] = Math.max(pts[i].y, this.course.heightAt(pts[i].x, pts[i].z)) + 0.06; arr[i * 3 + 2] = pts[i].z; }
-    g.setDrawRange(0, n); g.attributes.position.needsUpdate = true;
+    const pts = res.path; const n = Math.min(pts.length, 900);
+    writeFatLine(this.previewLine.geometry, n, (i, o) => { const p = pts[i]; o[0] = p.x; o[1] = Math.max(p.y, this.course.heightAt(p.x, p.z)) + 0.06; o[2] = p.z; });
     const e = res.end; this.landRing.position.set(e.x, this.groundY(e.x, e.z) + 0.05, e.z);
     const scale = this.club.putter ? 0.25 : 1; this.landRing.scale.set(scale, scale, 1);
     if (this.club.putter) {
-      this.previewLine.visible = false;
+      this.previewLine.visible = this.previewEdge.visible = false;
       this.buildRibbon(pts);
       const holed = res.mode === 'holed';
       this.ribbonMat.uniforms.uColor.value.set(holed ? 0x7dff4a : 0xffffff);
       this.puttRibbon.visible = true; this.landRing.visible = !holed;
       this.puttHoled = holed;
-    } else { this.previewLine.visible = true; this.puttRibbon.visible = false; this.landRing.visible = true; }
+    } else { this.previewLine.visible = this.previewEdge.visible = true; this.puttRibbon.visible = false; this.landRing.visible = true; }
     this.previewPath = pts; this.previewEnd = e;
     const carry = Math.hypot(e.x - from.x, e.z - from.z);
     this.hud.setTarget(this.planPower, carry, this.club.putter);
@@ -672,7 +704,7 @@ class Game {
     this.golfer.holdTop();
     this.hud.meter({ label: 'POWER', fill: s.power, marker: null, set: null, pct: s.power });
     this.hud.showAccuracy(true); this.hud.accuracy({ pos: 0, hit: null });
-    this.hud.setHint('<b>SPACE</b> when the marker is in the green'); this.hud.setSwingLabel('STRIKE');
+    this.hud.setHint('<b>SPACE</b> strike when the marker is in the gold'); this.hud.setSwingLabel('STRIKE');
   }
 
   strike() {
@@ -723,7 +755,7 @@ class Game {
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
     // every full shot is followed on the ball cam; C flips back to the eyes mid-flight. Putts stay at eye level.
     if (!this.club.putter) { this.camMode = 'chase'; this.chaseDir = null; }
-    this.previewLine.visible = false; this.landRing.visible = false; this.puttRibbon.visible = false;
+    this.previewLine.visible = this.previewEdge.visible = false; this.landRing.visible = false; this.puttRibbon.visible = false;
     this.hud.setSwingLabel('');
     this.hud.setHint(this.camMode === 'pov' ? '<b>C</b> ball camera' : '<b>C</b> first-person');
     this.hud.setCamTag('');
@@ -858,9 +890,9 @@ class Game {
     // trail
     if (this.ball.mode === 'fly') {
       this.trailPts.push(new THREE.Vector3(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z)); if (this.trailPts.length > this.trailN) this.trailPts.shift();
-      const ta = this.trail.geometry.attributes.position.array; const n = this.trailPts.length;
-      for (let i = 0; i < this.trailN; i++) { const p = this.trailPts[Math.max(0, i - (this.trailN - n))]; ta[i * 3] = p.x; ta[i * 3 + 1] = p.y; ta[i * 3 + 2] = p.z; }
-      this.trail.geometry.attributes.position.needsUpdate = true; this.trail.visible = n > 2;
+      const n = this.trailPts.length, N = this.trailN, tp = this.trailPts;
+      writeFatLine(this.trail.geometry, N, (i, o) => { const p = tp[Math.max(0, i - (N - n))]; o[0] = p.x; o[1] = p.y; o[2] = p.z; });
+      this.trail.visible = n > 2;
     } else { this.trail.visible = false; this.trailPts.length = 0; }
     // shadow blob
     const gh = this.course.heightAt(this.ball.pos.x, this.ball.pos.z), hgt = this.ball.pos.y - gh;
@@ -927,7 +959,7 @@ class Game {
       const diff = total - this.L.par;
       const name = total === 1 ? 'HOLE IN ONE!' : diff <= -2 ? 'EAGLE!' : diff === -1 ? 'BIRDIE!' : diff === 0 ? 'PAR' : diff === 1 ? 'BOGEY' : diff === 2 ? 'DOUBLE BOGEY' : `+${diff}`;
       this.hud.message(name, 0, 'good'); this.finalName = name; this.finalTotal = total; this.hud.setSwingLabel('');
-      this.scores[this.holeIndex] = { strokes: total, par: this.L.par, penalties: this.penalties };
+      this.scores[this.holeIndex] = { strokes: total, par: this.L.par, penalties: this.penalties }; this.updateRoundHud();
       this.holeCoins = coinsFor(total, this.L.par);
       if (this.profile) { this.store.addCoins(this.profile, this.holeCoins); this.hud.setCoins(this.profile.coins); }
       return;
@@ -986,16 +1018,27 @@ class Game {
     this.ballMesh.position.y = this.ball.pos.y - Math.min(0.1, this.holedT * 0.4);
     if (this.holedT > 2.0 && !this.endShown) {
       this.endShown = true;
+      this.hud.clearMessage();
       const played = this.scores.filter(Boolean);
       const toPar = played.reduce((a, s) => a + s.strokes - s.par, 0);
       const toParTxt = toPar === 0 ? 'E' : toPar > 0 ? `+${toPar}` : `${toPar}`;
       const last = this.holeIndex >= HOLE_COUNT - 1;
-      const card = `<div class="scorecard">${Array.from({ length: HOLE_COUNT }, (_, i) => this.scores[i]).map((sc, i) => `<span class="${sc ? (sc.strokes < sc.par ? 'under' : sc.strokes > sc.par ? 'over' : '') : 'todo'}"><small>${i + 1}</small>${sc ? sc.strokes : '·'}</span>`).join('')}</div>`;
+      const pars = Array.from({ length: HOLE_COUNT }, (_, i) => (this.scores[i] ? this.scores[i].par : holeFor(this.courseIndex, i).par));
+      const mark = (sc) => { if (!sc) return '<span class="mk todo">·</span>'; const d = sc.strokes - sc.par; return `<span class="mk ${d <= -2 ? 'eagle' : d === -1 ? 'birdie' : d === 1 ? 'bogey' : d >= 2 ? 'double' : ''}">${sc.strokes}</span>`; };
+      const half = (from, label) => {
+        const idx = Array.from({ length: 9 }, (_, k) => from + k), done = idx.map((i) => this.scores[i]).filter(Boolean);
+        const cur = (i) => (i === this.holeIndex ? ' class="cur"' : '');
+        return `<div class="sc-row head${from ? ' gap' : ''}"><span>HOLE</span>${idx.map((i) => `<span${cur(i)}>${i + 1}</span>`).join('')}<span>${label}</span></div>`
+          + `<div class="sc-row parrow"><span>PAR</span>${idx.map((i) => `<span${cur(i)}>${pars[i]}</span>`).join('')}<span>${idx.reduce((a, i) => a + pars[i], 0)}</span></div>`
+          + `<div class="sc-row"><span>SCORE</span>${idx.map((i) => `<span${cur(i)}>${mark(this.scores[i])}</span>`).join('')}<span>${done.length ? done.reduce((a, s) => a + s.strokes, 0) : '–'}</span></div>`;
+      };
+      const card = `<div class="scorecard">${half(0, 'OUT')}${half(9, 'IN')}</div>`;
       const roundTotal = played.reduce((a, s) => a + s.strokes, 0);
       let bestTxt = '';
       if (last && this.profile) { const cid = this.L.courseId; const prev = this.profile.best && this.profile.best[cid] ? this.profile.best[cid].strokes : null; this.store.finishRound(this.profile, cid, roundTotal, toPar); bestTxt = prev == null || roundTotal < prev ? ' · <b class="coin">new best!</b>' : ` · best ${prev}`; }
-      const coinsTxt = this.profile ? `<p><b class="coin">+${this.holeCoins} coins</b> · balance ◎ ${this.profile.coins}</p>` : '';
-      this.panel.innerHTML = `<div class="sub">HOLE ${this.L.number} · PAR ${this.L.par}</div><div class="score">${this.finalName}</div><p>${this.finalTotal} stroke${this.finalTotal === 1 ? '' : 's'}${this.penalties ? ` · ${this.penalties} penalt${this.penalties === 1 ? 'y' : 'ies'}` : ''} &nbsp;·&nbsp; round <b>${toParTxt}</b> through ${played.length}</p>${coinsTxt}${card}${last ? `<p><b>Round complete: ${roundTotal} (${toParTxt})</b>${bestTxt}</p>` : ''}<div class="mfoot" style="justify-content:center;gap:10px"><button class="btn small" id="shopBtn">PRO SHOP</button>${last ? `<button class="btn small" id="profBtn">PLAYERS</button>` : ''}<button class="btn" id="nextBtn">${last ? 'PLAY AGAIN' : 'NEXT HOLE →'}</button></div>`;
+      const diff = this.finalTotal - this.L.par;
+      const stats = `<div class="rstats"><div><b>${this.finalTotal}</b><i>stroke${this.finalTotal === 1 ? '' : 's'}${this.penalties ? ` · ${this.penalties} pen` : ''}</i></div><div><b>${toParTxt}</b><i>round · thru ${played.length}</i></div>${this.profile ? `<div><b class="coin">+${this.holeCoins}</b><i>coins · ${this.profile.coins} banked</i></div>` : ''}</div>`;
+      this.panel.innerHTML = `<div class="sub">${esc(this.L.courseName).toUpperCase()} · HOLE ${this.L.number} · PAR ${this.L.par}</div><div class="score ${diff > 0 ? 'over' : diff === 0 ? 'par' : ''}">${this.finalName}</div>${stats}${card}${last ? `<p><b>Round complete: ${roundTotal} (${toParTxt})</b>${bestTxt}</p>` : ''}<div class="pbtns"><button class="btn ghost" id="shopBtn">PRO SHOP</button>${last ? `<button class="btn ghost" id="profBtn">PLAYERS</button>` : ''}<button class="btn" id="nextBtn">${last ? 'PLAY AGAIN' : 'NEXT HOLE →'}</button></div>`;
       this.overlay.classList.remove('hidden');
       document.getElementById('nextBtn').onclick = () => { if (last) { this.scores = []; this.goToHole(0); } else this.goToHole(this.holeIndex + 1); };
       document.getElementById('shopBtn').onclick = () => this.openShop();
@@ -1007,16 +1050,16 @@ class Game {
   async goToHole(n) {
     if (this.loadingHole) return;
     this.loadingHole = true; this.state = 'loading'; this.endShown = false;
-    this.golfer.group.visible = false; this.previewLine.visible = false; this.landRing.visible = false; this.trail.visible = false; this.puttRibbon.visible = false;
+    this.golfer.group.visible = false; this.previewLine.visible = this.previewEdge.visible = false; this.landRing.visible = false; this.trail.visible = false; this.puttRibbon.visible = false;
     const L = holeFor(this.courseIndex, n);
-    this.panel.innerHTML = `<div class="sub">${L.courseName.toUpperCase()} · WALKING TO THE NEXT TEE</div><h1>${L.name ? L.name.toUpperCase() : 'HOLE ' + L.number}</h1><div class="sub">PAR ${L.par} · ${L.yards} YDS</div><p>${this.holeBlurb(L)}</p><div id="loading">…</div>`;
+    this.panel.innerHTML = `<div class="sub">${esc(L.courseName).toUpperCase()} · WALKING TO THE NEXT TEE</div><div class="holenum">${L.number}</div>${L.name ? `<h1 class="plain">${esc(L.name)}</h1>` : ''}<div class="hstats"><span>PAR <b>${L.par}</b></span><span><b>${L.yards}</b> YDS</span></div><p>${this.holeBlurb(L).replace(/^.*? yds\. /, '')}</p><div id="loading">…</div>`;
     this.overlay.classList.remove('hidden');
     try {
       await this.buildHoleScene(n, (t) => { const el = document.getElementById('loading'); if (el) el.textContent = t; });
       this.newHole();
     } catch (e) {
       console.error(e);
-      this.panel.innerHTML += `<p style="color:#ff8a7a">Could not build the hole: ${e.message}</p><button class="btn" id="retryBtn">RETRY</button>`;
+      this.panel.innerHTML += `<p style="color:var(--coral)">Could not build the hole: ${esc(e.message)}</p><button class="btn" id="retryBtn">RETRY</button>`;
       document.getElementById('retryBtn').onclick = () => { this.loadingHole = false; this.goToHole(n); };
       return;
     }
