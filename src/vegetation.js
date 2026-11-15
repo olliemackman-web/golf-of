@@ -30,6 +30,63 @@ gl_Position = projectionMatrix * mvPosition;`);
   };
 }
 
+/**
+ * Individual grass blades in a disc around the ball, so the ground under the golfer's eyes is
+ * grass and not a painted texture. One instanced mesh, laid out again each time the ball comes
+ * to rest: long blades in the rough, a short nap on the fairway, nothing on greens, tees or sand.
+ */
+export class GrassPatch {
+  /** `grassCanvas` is the turf texture's canvas: the blades take its average colour so they match the ground. */
+  constructor(count = 12000, radius = 3.6, grassCanvas = null) {
+    this.count = count; this.radius = radius;
+    this.base = [0.09, 0.2, 0.05];
+    if (grassCanvas && grassCanvas.getContext) {
+      const d = grassCanvas.getContext('2d').getImageData(0, 0, grassCanvas.width, grassCanvas.height).data, lin = (u) => Math.pow(u / 255, 2.2);
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4 * 37) { r += lin(d[i]); g += lin(d[i + 1]); b += lin(d[i + 2]); n++; }
+      this.base = [r / n, g / n, b / n];
+    }
+    // a tapered, slightly bent blade; normals point up so it takes the light like the turf under it
+    const P = [[-0.5, 0], [0.5, 0], [-0.32, 0.5], [0.32, 0.5], [0, 1]];
+    const pos = [], uv = [], nor = [], col = [];
+    for (const [x, y] of P) { pos.push(x, y, 0.28 * y * y); uv.push(x + 0.5, y); nor.push(0, 1, 0); const c = 0.62 + 0.62 * y; col.push(c, c, c * 0.92); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    // both windings, single-sided: a double-sided material would flip the normal on the far face and black it out
+    geo.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 0, 2, 1, 1, 2, 3, 2, 4, 3]);
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+    addWind(mat, { byUv: true, amp: 0.014, freq: 1.7 });
+    this.mesh = new THREE.InstancedMesh(geo, mat, count);
+    this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; this.mesh.visible = false;
+    // fixed scatter, denser toward the middle where the eye is
+    const rnd = mulberry32(977); this.spots = new Float32Array(count * 5);
+    for (let i = 0; i < count; i++) { const a = rnd() * Math.PI * 2, r = radius * Math.pow(rnd(), 0.72); this.spots.set([Math.cos(a) * r, Math.sin(a) * r, rnd(), rnd(), rnd()], i * 5); }
+  }
+
+  /** Lay the blades out around (cx, cz) on this course. */
+  place(course, cx, cz) {
+    const L = course.layout, R = this.radius, S = this.spots, B = this.base;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), s = new THREE.Vector3(), c = new THREE.Color();
+    for (let i = 0; i < this.count; i++) {
+      const ox = S[i * 5], oz = S[i * 5 + 1], r1 = S[i * 5 + 2], r2 = S[i * 5 + 3], r3 = S[i * 5 + 4];
+      const x = cx + ox, z = cz + oz, r = Math.hypot(ox, oz);
+      const sf = course.surfaceAt(x, z).id;
+      let h = 0, w = 0;
+      if (sf === SURF.ROUGH && fescueWeight(L, x, z) < 0.3) { h = 0.05 + r1 * 0.06; w = 0.009 + r2 * 0.008; const k = 1.0 + r3 * 0.45; c.setRGB(B[0] * 0.62 * k, B[1] * 0.78 * k, B[2] * 0.46 * k); }
+      else if (sf === SURF.FAIRWAY && r < R * 0.7) { h = 0.014 + r1 * 0.012; w = 0.007 + r2 * 0.005; const k = 0.9 + r3 * 0.25; c.setRGB(B[0] * 1.02 * k, B[1] * 1.2 * k, B[2] * 0.6 * k); }
+      // thin out toward the rim so the patch has no edge, and keep the ball itself in view
+      h *= (1 - smoothstep(R * 0.6, R, r)) * (0.4 + 0.6 * smoothstep(0.05, 0.3, r));
+      if (h <= 0.002) { m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, m); continue; }
+      e.set((r1 - 0.5) * 0.5, r2 * Math.PI * 2, (r3 - 0.5) * 0.5);
+      m.compose(p.set(x, course.heightAt(x, z) - 0.004, z), q.setFromEuler(e), s.set(w, h, w));
+      this.mesh.setMatrixAt(i, m); this.mesh.setColorAt(i, c);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true; if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.mesh.visible = true;
+  }
+}
+
 export class TreeField {
   constructor() { this.trees = []; this.cell = 24; this.grid = new Map(); this.cooldown = 0; }
   add(t) { this.trees.push(t); const k = this.key(t.x, t.z); if (!this.grid.has(k)) this.grid.set(k, []); this.grid.get(k).push(t); }

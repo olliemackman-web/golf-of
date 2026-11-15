@@ -26,10 +26,11 @@ page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
 await page.goto(base + '/');
 await page.waitForFunction(() => window.__game && window.__game.state === 'title', null, { timeout: 180000 });
-await page.fill('#panel input', 'shots'); await page.click('#panel .pnew .btn');
+await page.fill('#panel input', 'shots'); await page.evaluate(() => document.querySelector('#panel .pnew .btn').click());
 await page.waitForFunction(() => !document.querySelector('#panel input'));
 const course = parseInt(process.env.COURSE || '0', 10);
-await page.locator('#panel .btn').nth(course).click();
+// click from inside the page: under the software renderer a frame can outlast Playwright's click timeout
+await page.evaluate((c) => document.querySelectorAll('#panel .btn')[c].click(), course);
 await page.waitForFunction(() => ['flyover', 'aim'].includes(window.__game.state), null, { timeout: 180000 });
 await page.evaluate(() => { window.__game.paused = true; document.getElementById('hud').style.display = 'none'; document.getElementById('overlay').style.display = 'none'; });
 const only = (process.env.ONLY || '').split(',').filter(Boolean);
@@ -55,6 +56,11 @@ await shot('07-approach', () => { const g = window.__game; const pin = g.L.pin; 
 await shot('09-divot', () => { const g = window.__game; g.newHole(); const sp = g.L.spline; const m = sp[Math.round((sp.length - 1) * 0.6)]; g.ball.place(m[0], m[1]); g.autoClub(); g.solvePlan(); g.enterAim(); g.enterAddress(); for (let i = 0; i < 75; i++) g.update(1 / 60); g.armSwing(); const s = g.swing; s.phase = 'acc'; s.pos = 0.5; s.power = 0.95; g.state = 'swing'; g.strike(); g.camMode = 'pov'; for (let i = 0; i < 60 && g.state !== 'flight'; i++) g.update(1 / 60); g.camMode = 'pov'; for (let i = 0; i < 9; i++) g.update(1 / 60); });
 await shot('10-splash', () => { const g = window.__game; g.newHole(); const q = g.L.pond; if (!q) return; const lvl = g.course.waterLevelAt(q.x, q.z); g.fx.splash({ x: q.x, y: lvl, z: q.z }, lvl); const v = g.camera.position.clone(); g.debugCam = { pos: v.clone().set(q.x + 7, lvl + 2.2, q.z - 9), look: v.clone().set(q.x, lvl + 0.6, q.z) }; g.state = 'title'; for (let i = 0; i < 26; i++) g.fx.update(1 / 60, g.camera, 540); });
 await page.evaluate(() => { const g = window.__game; g.debugCam = null; g.state = 'aim'; });
+// close-up ground: the ball in the rough beside the fairway, a bunker from its edge, and the cup as a birdie drops
+await shot('11-rough', () => { const g = window.__game; g.newHole(); const sp = g.L.spline, k = Math.round((sp.length - 1) * 0.5), a = sp[k], b = sp[k + 1]; const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), off = g.L.halfWidth + 5; g.ball.place(a[0] - dz / l * off, a[1] + dx / l * off); g.autoClub(); g.solvePlan(); g.enterAim(); g.enterAddress(); for (let i = 0; i < 80; i++) g.update(1 / 60); });
+await shot('12-bunker', () => { const g = window.__game; g.newHole(); g.enterAim(); const b = g.L.bunkers[0]; if (!b) return; const v = g.camera.position.clone(), y = g.course.heightAt(b.x, b.z); g.debugCam = { pos: v.clone().set(b.x + b.rx + 5, y + 2.6, b.z + b.rz + 4), look: v.clone().set(b.x, y, b.z) }; });
+await page.evaluate(() => { window.__game.debugCam = null; });
+await shot('13-holed', () => { const g = window.__game, pin = g.L.pin; g.newHole(); g.ball.place(pin.x + 2.5, pin.z + 1.5); g.autoClub(); g.solvePlan(); g.enterAim(); const p = g.aimPose(); g.camera.position.copy(p.pos); g.lookDir.subVectors(p.look, p.pos).normalize(); g.setLook(); g.shotClub = g.club; g.strokes = g.L.par - 1; g.ball.pos.x = pin.x; g.ball.pos.z = pin.z; g.ball.mode = 'holed'; g.onShotEnd(); for (let i = 0; i < 55; i++) g.update(1 / 60); });
 if (process.env.HOLE) {
   const n = parseInt(process.env.HOLE, 10) - 1;
   await page.evaluate(async (n) => { await window.__game.goToHole(n); }, n);

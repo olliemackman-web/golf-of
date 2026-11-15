@@ -92,6 +92,16 @@ float fairway = mask.r, green = mask.g, sand = mask.b, water = mask.a;
 float rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 vec4 nA = texture2D(tNoise, wuv / 61.0);
 vec4 nB = texture2D(tNoise, wuv / 9.7 + 0.3);
+// Mown edges are cut lines, not gradients: sharpen the soft mask about its half-way contour, with
+// a little wobble so the line wanders like a real mower's. The band just outside the fairway is
+// the first cut.
+float wob = (nB.g - 0.5) * 0.09 + (nB.a - 0.5) * 0.05;
+float fairRaw = fairway;
+fairway = smoothstep(0.4, 0.6, fairway + wob);
+green = smoothstep(0.42, 0.58, green + wob * 0.4);
+fairway *= 1.0 - green;
+float firstCut = smoothstep(0.1, 0.24, fairRaw + wob) * (1.0 - fairway) * (1.0 - green);
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 float camDist = length(vWorldPos - cameraPosition);
 float farMix = smoothstep(10.0, 80.0, camDist);
 // turf detail at three scales, drifting to a macro sample far away so the tiling never shows
@@ -118,24 +128,27 @@ float stripeF = 1.0 + 0.16 * sheen * (1.0 - farMix * 0.3) + 0.03 * band;
 vec3 fairCol = turf * vec3(1.02, 1.20, 0.60) * stripeF * (0.94 + 0.12 * nA.r);
 fairCol = mix(fairCol, fairCol * vec3(1.06, 1.0, 0.82), nA.b * 0.3);
 // first cut between fairway and rough: half-way colour, a touch darker because it is longer
-float core = smoothstep(0.5, 0.97, fairway);
-vec3 collarCol = mix(roughCol, fairCol, 0.55) * 0.93;
-vec3 fairMixed = mix(collarCol, fairCol, core);
+vec3 collarCol = mix(roughCol, fairCol, 0.5) * 0.92;
+roughCol = mix(roughCol, collarCol, firstCut);
+vec3 fairMixed = fairCol;
 // GREEN: fine cross-cut checker with the same view-dependent sheen, and a fringe collar
 vec3 g3 = texture2D(tGrass, wuv / 0.7).rgb;
 float chkA = sign(sin(dot(wuv, uStripeDir) * 6.2831 / 2.2));
 float chkB = sign(sin(dot(wuv, uMowDir) * 6.2831 / 2.2));
 float chkSheen = chkA * dot(toCam, uMowDir) * 0.06 + chkB * dot(toCam, uStripeDir) * 0.06;
 vec3 greenCol = mix(g3, turf, 0.6) * vec3(1.04, 1.26, 0.68) * (1.0 + chkSheen + 0.02 * (chkA + chkB)) * (0.97 + 0.06 * nB.g);
-float gcore = smoothstep(0.55, 0.97, green);
-vec3 greenMixed = mix(fairCol * 0.96, greenCol, gcore);
+vec3 greenMixed = greenCol;
 // SAND: raked bunker with a shaded lip on the side facing away from the sun. The mask edge is a
 // single texel wide, so the sand weight is smoothed over five taps before it is used for the
 // blend and the lip, otherwise the texel grid shows as steps along the edge.
-vec3 sandCol = texture2D(tSand, wuv / 2.6).rgb * (0.92 + 0.16 * nB.g) * (0.97 + 0.06 * nB.a);
+vec3 sandCol = texture2D(tSand, wuv / 2.6).rgb * (1.0 + 0.16 * nB.g) * (0.97 + 0.06 * nB.a);
+// rake furrows, close up only (they would shimmer at distance)
+sandCol *= 1.0 + 0.07 * sin(dot(wuv, vec2(0.35, 0.94)) * 52.0 + nB.r * 5.0) * (1.0 - smoothstep(6.0, 26.0, camDist));
 float rim = smoothstep(0.03, 0.4, sand) * (1.0 - smoothstep(0.4, 0.95, sand));
 #ifdef TERRAIN_LITE
 sandCol *= 1.0 - 0.28 * rim;
+sand = smoothstep(0.36, 0.6, sand + wob * 0.5);
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 #else
 float px = 1.1 / uSize;
 float sL = texture2D(tMask, muv - vec2(px, 0.0)).b, sR = texture2D(tMask, muv + vec2(px, 0.0)).b;
@@ -145,7 +158,12 @@ rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 vec2 sg = vec2(sR - sL, sU - sD); // points into the bunker
 rim = smoothstep(0.03, 0.4, sand) * (1.0 - smoothstep(0.4, 0.95, sand));
 float lipShade = rim * clamp(-dot(normalize(sg + 1e-5), uSunXZ), 0.0, 1.0);
-sandCol *= 1.0 - 0.5 * lipShade - 0.16 * rim;
+sandCol *= 1.0 - 0.55 * lipShade - 0.16 * rim;
+// the cut edge: sharpen, then lay a thin shadow line on the sand just inside the turf lip
+float sandSoft = sand;
+sand = smoothstep(0.36, 0.6, sand + wob * 0.5);
+sandCol *= 1.0 - 0.42 * sand * (1.0 - smoothstep(0.6, 0.86, sandSoft));
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 #endif
 // WATER BED: dark silt, darker toward the middle of the pond
 vec3 mud = vec3(0.20, 0.17, 0.11) * (0.8 + 0.4 * nB.r) * (1.0 - 0.5 * smoothstep(0.4, 1.0, water));
@@ -198,7 +216,7 @@ normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(6.0, 45.0, terrain
   mat.defines = {};
   if (lite) mat.defines.TERRAIN_LITE = '';
   if (space) mat.defines.TERRAIN_SPACE = '';
-  mat.customProgramCacheKey = () => 'terrain-splat-v3' + (lite ? '-lite' : '') + (space ? '-space' : '');
+  mat.customProgramCacheKey = () => 'terrain-splat-v4' + (lite ? '-lite' : '') + (space ? '-space' : '');
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true; mesh.castShadow = false;
   mesh.name = 'terrain';

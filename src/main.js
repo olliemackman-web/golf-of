@@ -10,7 +10,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
 import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
-import { buildVegetation, setWindTime, TreeField } from './vegetation.js';
+import { buildVegetation, setWindTime, TreeField, GrassPatch } from './vegetation.js';
 import { buildAsteroids } from './space.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
@@ -25,7 +25,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.75, T_ACC_PUTT = 0.9;
 const TEE_H = 0.028; // how far a teed ball sits above the turf
 const ZOOM_MAX = 5, ZOOM_STEPS = [1, 1.6, 2.5, 4];
-import { ACC_BANDS } from './hud.js';
+import { ACC_BANDS, accBand } from './hud.js';
 
 /** A screen-space-width line over a fixed buffer of `maxPts` points; fill it with writeFatLine. */
 function fatLine(maxPts, opts, geo = null) {
@@ -142,6 +142,7 @@ class Game {
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.0075, 0.0034, 0.007, 10), pegMat); cup.position.y = -0.0035; this.peg.add(cup);
     this.peg.visible = false; scene.add(this.peg);
     this.fx = new Effects(scene); this.fx.ground = (x, z) => this.groundY(x, z);
+    this.grass = new GrassPatch(this.isMobile ? 6000 : 16000, 3.6, this.tex.grass.image); scene.add(this.grass.mesh);
 
     // post
     if (this.quality.bloom) {
@@ -222,6 +223,7 @@ class Game {
     }
     if (this.ball) { this.ball.course = this.course; this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin; }
     if (this.hud) this.hud.setHole(this.course);
+    if (this.grass) this.grass.mesh.visible = false; // laid out again when the first shot is lined up
   }
 
   get L() { return this.course.layout; }
@@ -268,7 +270,7 @@ class Game {
   newHole() {
     this.strokes = 1; this.penalties = 0; this.endShown = false;
     this.ball.place(this.L.tee.x, this.L.tee.z);
-    this.teed = true; this.peg.visible = true;
+    this.teed = true; this.peg.visible = true; this.peg.rotation.set(0, 0, 0); this.pegFly = null; this.hud.banner(''); this.hud.setFlight(null);
     this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
     this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
     this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN'); this.aimZoom = 1; this.hud.setZoomLabel(1);
@@ -363,6 +365,7 @@ class Game {
 
   enterAim() {
     this.state = 'aim';
+    this.grass.place(this.course, this.ball.pos.x, this.ball.pos.z);
     this.golfer.group.visible = false;
     this.applyAimFov();
     if (this.club.putter) this.placePutterRig();
@@ -736,6 +739,8 @@ class Game {
     if (s.phase !== 'acc') return;
     s.acc = (s.pos - 0.5) * 2; // -1 left .. +1 right of centre
     this.hud.accuracy({ pos: s.pos, hit: s.pos });
+    const band = accBand(s.acc).name, right = s.acc > 0;
+    this.hud.callout(band === 'gold' ? 'Perfect!' : band === 'green' ? 'Good' : this.club.putter ? (right ? 'Pushed' : 'Pulled') : band === 'amber' ? (right ? 'Pushed' : 'Pulled') : (right ? 'Slice!' : 'Hook!'), band);
     s.phase = 'down'; s.t = 0;
     this.golfer.beginDownswing(this.club.putter ? T_DOWN_PUTT : T_DOWN, () => this.impact());
     this.hud.setSwingLabel('');
@@ -777,8 +782,13 @@ class Game {
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z }; this.shotAim = this.aimDir();
     // off the peg or through the turf: the ball leaves its tee, an iron takes a divot, a bunker shot throws sand
     const wasTeed = this.teed; this.teed = false;
+    this.shake = { t: 0, dur: this.club.putter ? 0 : 0.28, amp: 0.012 + 0.03 * s.power * (this.club.wood ? 1 : 0.7) };
+    this.firstLand = false; this.flightMax = 0;
     if (!this.club.putter) {
       const bp = this.ball.pos, fxp = { x: bp.x, y: bp.y - BALL_R, z: bp.z };
+      this.fx.flash({ x: bp.x, y: bp.y + (wasTeed ? TEE_H : 0), z: bp.z }, dir, s.power);
+      // a driver sends the peg cartwheeling
+      if (wasTeed && this.club.wood) this.pegFly = { vx: dir.x * 2.2 + (this.rnd() - 0.5), vy: 2.6 + this.rnd(), vz: dir.z * 2.2 + (this.rnd() - 0.5), spin: 14 + this.rnd() * 10 };
       if (lie === SURF.SAND) this.fx.sand(fxp, dir, s.power);
       else if (!wasTeed || !this.club.wood) this.fx.turf(fxp, dir, s.power * (wasTeed ? 0.5 : 1));
     }
@@ -812,6 +822,7 @@ class Game {
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
     this.ribbonMat.uniforms.uTime.value = this.time;
     this.fx.update(dt, this.camera, this.renderer.domElement.height);
+    if (this.pegFly) this.updatePegFly(dt);
     const aimDir = this.aimDir();
     // dial: wind relative to the aim line, + = blowing toward the player's right
     { const wb = this.windBase; const along = wb.x * aimDir.x + wb.z * aimDir.z, lateral = -wb.x * aimDir.z + wb.z * aimDir.x; this.hud.setWind(wb.speed, Math.atan2(lateral, along)); }
@@ -826,6 +837,11 @@ class Game {
       case 'settle': this.updateSettle(dt); break;
       case 'walk': this.updateWalk(dt); break;
       case 'holed': this.updateHoled(dt); break;
+    }
+    // the strike jolts the view for a moment
+    if (this.shake && this.shake.t < this.shake.dur) {
+      const k = this.shake; k.t += dt; const a = k.amp * Math.pow(1 - Math.min(1, k.t / k.dur), 2);
+      this.camera.position.x += (Math.random() - 0.5) * a; this.camera.position.y += (Math.random() - 0.5) * a; this.camera.position.z += (Math.random() - 0.5) * a;
     }
     this.updateSun();
     this.hud.drawMinimap(this.ball.pos, aimDir, this.state === 'aim' ? this.previewPath : null);
@@ -912,7 +928,7 @@ class Game {
     if (this.lockShot) this.stepLockShot(dt);
     else this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
     for (const ev of this.ball.events) {
-      if (ev.type === 'bounce') { this.audio.bounce(ev.speed); this.fx.puff({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }, ev.surface === SURF.SAND ? 'sand' : 'turf', ev.surface === SURF.GREEN ? ev.speed * 0.35 : ev.speed); }
+      if (ev.type === 'bounce') { if (!this.firstLand && !this.shotClub.putter) { this.firstLand = true; this.fx.landMark({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }); } this.audio.bounce(ev.speed); this.fx.puff({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }, ev.surface === SURF.SAND ? 'sand' : 'turf', ev.surface === SURF.GREEN ? ev.speed * 0.35 : ev.speed); }
       else if (ev.type === 'tree') { this.audio.tree(); this.fx.leaves(this.ball.pos); this.hud.message('Off the trees!', 1600, 'bad'); }
       else if (ev.type === 'lipout') { this.hud.message('Lip out!', 1500, 'bad'); }
     }
@@ -939,10 +955,25 @@ class Game {
     this.blob.visible = this.ball.mode === 'fly' && hgt > 0.05;
     this.blob.position.set(this.ball.pos.x, gh + 0.03, this.ball.pos.z); const bs = 0.04 + hgt * 0.02; this.blob.scale.set(bs, bs, 1); this.blob.material.opacity = 0.45 / (1 + hgt * 0.12);
 
+    if (this.flightT > 0.7) { this.hud.showMeter(false); this.hud.showAccuracy(false); } // the swing gauges have done their job
+    // live carry and height while the ball is in the air
+    if (!this.shotClub.putter && !this.firstLand && this.ball.mode === 'fly') {
+      this.flightMax = Math.max(this.flightMax, hgt);
+      this.hud.setFlight(Math.hypot(this.ball.pos.x - this.shotStart.x, this.ball.pos.z - this.shotStart.z), this.flightMax);
+    }
     this.golfer.update(dt);
     this.updateFlightCamera(dt);
 
     if (this.ball.mode === 'rest' || this.ball.mode === 'water' || this.ball.mode === 'oob' || this.ball.mode === 'holed') this.onShotEnd();
+  }
+
+  /** The tee peg, knocked out by a driver: it tumbles forward and comes to rest on its side. */
+  updatePegFly(dt) {
+    const f = this.pegFly, p = this.peg.position;
+    f.vy -= 9.8 * dt; p.x += f.vx * dt; p.y += f.vy * dt; p.z += f.vz * dt;
+    this.peg.rotation.x += f.spin * dt; this.peg.rotation.z += f.spin * 0.6 * dt;
+    const g = this.groundY(p.x, p.z) + 0.006;
+    if (p.y <= g && f.vy < 0) { p.y = g; this.peg.rotation.set(Math.PI / 2, 0, this.peg.rotation.z); this.pegFly = null; }
   }
 
   /** Code 1111: carry the ball along an arc (a roll, for a putt) that ends in the cup. */
@@ -1005,13 +1036,20 @@ class Game {
 
   onShotEnd() {
     const b = this.ball;
-    this.blob.visible = false; this.hud.showMeter(false); this.hud.showAccuracy(false);
+    this.blob.visible = false; this.hud.showMeter(false); this.hud.showAccuracy(false); this.hud.setFlight(null);
     if (b.mode === 'holed') {
       this.audio.cup(); this.state = 'holed'; this.holedT = 0;
       const total = this.strokes;
       const diff = total - this.L.par;
       const name = total === 1 ? 'HOLE IN ONE!' : diff <= -2 ? 'EAGLE!' : diff === -1 ? 'BIRDIE!' : diff === 0 ? 'PAR' : diff === 1 ? 'BOGEY' : diff === 2 ? 'DOUBLE BOGEY' : `+${diff}`;
-      this.hud.message(name, 0, 'good'); this.finalName = name; this.finalTotal = total; this.hud.setSwingLabel('');
+      this.finalName = name; this.finalTotal = total; this.hud.setSwingLabel(''); this.hud.clearMessage(); this.hud.setHint(''); this.hud.setCamTag('');
+      // the celebration scales with the result: nothing over par, a chime for par, confetti and applause under it
+      const tier = this.holeTier = total === 1 || diff <= -2 ? 3 : diff === -1 ? 2 : diff === 0 ? 1 : 0;
+      const pin = this.L.pin, py = this.groundY(pin.x, pin.z);
+      this.hud.banner(name, `HOLE ${this.L.number} · ${total} STROKE${total === 1 ? '' : 'S'}`, total === 1 ? 'ace' : diff < 0 ? 'under' : diff === 0 ? 'par' : 'over');
+      this.fx.celebrate({ x: pin.x, y: py, z: pin.z }, tier); this.audio.celebrate(tier); this.celebrateT = 0.55;
+      this.golfer.group.visible = false; this.trail.visible = false;
+      this.orbit0 = Math.atan2(this.camera.position.z - pin.z, this.camera.position.x - pin.x);
       this.scores[this.holeIndex] = { strokes: total, par: this.L.par, penalties: this.penalties }; this.updateRoundHud();
       this.holeCoins = coinsFor(total, this.L.par);
       if (this.profile) { this.store.addCoins(this.profile, this.holeCoins); this.hud.setCoins(this.profile.coins); }
@@ -1069,9 +1107,19 @@ class Game {
     this.holedT += dt; this.golfer.update(dt);
     // ball drops out of sight
     this.ballMesh.position.y = this.ball.pos.y - Math.min(0.1, this.holedT * 0.4);
-    if (this.holedT > 2.0 && !this.endShown) {
+    // the camera swings in and circles the cup while the result is up
+    const pin = this.L.pin, py = this.groundY(pin.x, pin.z), ang = this.orbit0 + this.holedT * 0.42;
+    const want = this.tmp.a.set(pin.x + Math.cos(ang) * 3.3, py + 1.15, pin.z + Math.sin(ang) * 3.3);
+    want.y = Math.max(want.y, this.groundY(want.x, want.z) + 0.5);
+    this.camera.position.lerp(want, 1 - Math.exp(-dt * 2.4));
+    const look = this.tmp.b.set(pin.x, py + 0.45, pin.z).sub(this.camera.position).normalize();
+    this.lookDir.lerp(look, 1 - Math.exp(-dt * 5)).normalize(); this.setLook();
+    this.camera.fov += (50 - this.camera.fov) * (1 - Math.exp(-dt * 3)); this.camera.updateProjectionMatrix();
+    // an eagle or an ace keeps the confetti coming for a moment
+    if (this.holeTier >= 3 && this.holedT < 2.2) { this.celebrateT -= dt; if (this.celebrateT <= 0) { this.celebrateT = 0.55; this.fx.celebrate({ x: pin.x, y: py, z: pin.z }, 2); } }
+    if (this.holedT > (this.holeTier >= 2 ? 3.2 : 2.3) && !this.endShown) {
       this.endShown = true;
-      this.hud.clearMessage();
+      this.hud.clearMessage(); this.hud.banner('');
       const played = this.scores.filter(Boolean);
       const toPar = played.reduce((a, s) => a + s.strokes - s.par, 0);
       const toParTxt = toPar === 0 ? 'E' : toPar > 0 ? `+${toPar}` : `${toPar}`;

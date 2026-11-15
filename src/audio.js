@@ -43,6 +43,17 @@ export class GameAudio {
     this.burst({ dur: 0.05, freq: 900, q: 1, gain: 0.25, when: 0.09 });
     this.burst({ dur: 0.05, freq: 700, q: 1, gain: 0.18, when: 0.16 });
   }
+  /** Holed out: a chime for par, rising notes and applause for a birdie, more of both for better. */
+  celebrate(tier) {
+    if (!this.ctx || tier <= 0) return;
+    const notes = tier >= 3 ? [523, 659, 784, 1047, 1319] : tier === 2 ? [587, 740, 880, 1175] : [660, 880];
+    notes.forEach((f, i) => { this.tone({ freq: f, dur: 0.5, gain: tier >= 2 ? 0.1 : 0.06, type: 'triangle', when: 0.25 + i * 0.11 }); this.tone({ freq: f * 2, dur: 0.3, gain: 0.03, when: 0.25 + i * 0.11 }); });
+    if (tier < 2) return;
+    // applause: a crowd of single claps, swelling and dying away
+    const len = tier >= 3 ? 3.6 : 2.4, n = tier >= 3 ? 150 : 80;
+    for (let i = 0; i < n; i++) { const u = Math.random(), env = Math.sin(Math.PI * Math.pow(u, 0.7)); this.burst({ dur: 0.03, freq: 1400 + Math.random() * 2200, q: 1.4, gain: (0.03 + Math.random() * 0.05) * (0.4 + env), when: 0.35 + u * len }); }
+    if (tier >= 3) { this.tone({ freq: 1800, to: 2900, dur: 0.35, gain: 0.04, when: 0.9 }); this.tone({ freq: 2000, to: 3100, dur: 0.3, gain: 0.03, when: 1.7 }); }
+  }
   splash() { if (!this.ctx) return; this.burst({ dur: 0.5, freq: 700, q: 0.4, gain: 0.5, type: 'lowpass', attack: 0.02 }); this.burst({ dur: 0.25, freq: 2500, q: 0.5, gain: 0.2, attack: 0.05, when: 0.05 }); }
   tree() { if (!this.ctx) return; this.burst({ dur: 0.08, freq: 400, q: 0.6, gain: 0.35, type: 'lowpass' }); this.burst({ dur: 0.3, freq: 4000, q: 0.3, gain: 0.12, type: 'highpass', when: 0.02 }); }
   click() { if (!this.ctx) return; this.burst({ dur: 0.02, freq: 2000, q: 1, gain: 0.08 }); }

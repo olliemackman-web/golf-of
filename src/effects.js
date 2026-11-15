@@ -1,11 +1,13 @@
 // What the ball kicks up: turf from an iron shot, sand from a bunker, a splash and ripples from
-// water, leaves out of a tree, a puff where it lands. One point cloud, updated on the CPU.
+// water, leaves out of a tree, a puff where it lands; plus the strike flash and the confetti when
+// a putt drops. One point cloud, updated on the CPU.
 import * as THREE from 'three';
 
 const MAX = 900;
 const TURF = [[0.1, 0.19, 0.045], [0.13, 0.23, 0.055], [0.17, 0.27, 0.07], [0.08, 0.15, 0.04], [0.13, 0.095, 0.05]];
 const SAND = [[0.78, 0.68, 0.46], [0.7, 0.6, 0.4], [0.86, 0.77, 0.56]];
 const WATER = [[0.82, 0.9, 1.0], [0.68, 0.8, 0.95], [1, 1, 1]];
+const CONFETTI = [[0.9, 0.52, 0.04], [0.32, 0.72, 0.06], [0.9, 0.9, 0.88], [0.85, 0.1, 0.07], [0.06, 0.28, 0.85], [0.78, 0.12, 0.48]];
 const LEAF = [[0.1, 0.22, 0.05], [0.16, 0.27, 0.06], [0.24, 0.24, 0.07]];
 
 export class Effects {
@@ -36,9 +38,9 @@ export class Effects {
     this.grav = new Float32Array(MAX); this.drag = new Float32Array(MAX); this.flut = new Float32Array(MAX);
     this.next = 0; this.live = 0;
     // water ripples: flat rings that spread and fade
-    this.rings = [];
+    this.rings = []; this.ringNext = 0;
     const rgeo = new THREE.RingGeometry(0.9, 1, 56); rgeo.rotateX(-Math.PI / 2);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       const r = new THREE.Mesh(rgeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
       r.visible = false; r.renderOrder = 4; r.userData = { t: 0, dur: 1, delay: 0, to: 1 }; scene.add(r); this.rings.push(r);
     }
@@ -84,9 +86,35 @@ export class Effects {
     const q = { x: p.x, y: level + 0.02, z: p.z };
     this.spray(q, { x: 1, z: 0 }, 90, WATER, { speed: 2.6, up: 4.6, spread: Math.PI, size: 0.075, life: 1.2, drag: 0.5 });
     this.spray(q, { x: 1, z: 0 }, 40, WATER, { speed: 0.5, up: 7.5, spread: Math.PI, size: 0.1, life: 1.3, drag: 0.4 });
-    for (let i = 0; i < 4; i++) {
-      const r = this.rings[(this.ringNext = ((this.ringNext || 0) + 1) % this.rings.length)];
-      r.position.set(p.x, level + 0.03, p.z); r.userData = { t: 0, delay: i * 0.28, dur: 2.2, to: 2.6 + i * 0.9 }; r.visible = true; r.material.opacity = 0; r.scale.setScalar(0.05);
+    for (let i = 0; i < 4; i++) this.ring(p.x, level + 0.03, p.z, { delay: i * 0.28, dur: 2.2, to: 2.6 + i * 0.9 });
+  }
+  /** One flat ring that spreads to `to` metres and fades: ripples, landing marks, the glow round the cup. */
+  ring(x, y, z, { delay = 0, dur = 1, to = 1.5, color = 0xffffff, peak = 0.5 } = {}) {
+    const r = this.rings[(this.ringNext = (this.ringNext + 1) % this.rings.length)];
+    r.position.set(x, y, z); r.userData = { t: 0, delay, dur, to, peak }; r.material.color.set(color); r.visible = true; r.material.opacity = 0; r.scale.setScalar(0.05);
+  }
+  /** The strike: a white flash at the ball and a few sparks along the line. */
+  flash(p, dir, power = 1) {
+    this.spawn(p.x, p.y, p.z, 0, 0, 0, [1.6, 1.6, 1.5], 0.16 + 0.22 * power, 0.09, 0, 0);
+    for (let k = 0; k < 10; k++) this.spawn(p.x, p.y, p.z, dir.x * (4 + Math.random() * 8) + (Math.random() - 0.5) * 3, 1 + Math.random() * 4, dir.z * (4 + Math.random() * 8) + (Math.random() - 0.5) * 3, [1.5, 1.45, 1.2], 0.012 + Math.random() * 0.012, 0.16 + Math.random() * 0.14, 4, 2);
+  }
+  /** Where a full shot first comes down: a quick ring on the turf. */
+  landMark(p) { this.ring(p.x, p.y + 0.04, p.z, { dur: 0.7, to: 1.3, peak: 0.6 }); }
+  /**
+   * Holed out. tier 0 = over par (nothing), 1 = par (a soft ring), 2 = birdie (confetti and rings),
+   * 3 = eagle or an ace (a bigger fountain; the game repeats it for a moment).
+   */
+  celebrate(p, tier) {
+    if (tier <= 0) return;
+    const gold = tier >= 2 ? 0xffd84a : 0xffffff;
+    this.ring(p.x, p.y + 0.03, p.z, { dur: 1.1, to: 1.6 + tier * 0.7, color: gold, peak: 0.75 });
+    if (tier >= 2) { this.ring(p.x, p.y + 0.03, p.z, { delay: 0.22, dur: 1.3, to: 3.2 + tier, color: 0xc9ff5b, peak: 0.6 }); this.ring(p.x, p.y + 0.03, p.z, { delay: 0.45, dur: 1.5, to: 5 + tier, color: gold, peak: 0.45 }); }
+    for (let k = 0; k < 14; k++) { const a = Math.random() * Math.PI * 2; this.spawn(p.x, p.y + 0.02, p.z, Math.cos(a) * 0.8, 1.5 + Math.random() * 1.5, Math.sin(a) * 0.8, [1.5, 1.4, 1.0], 0.02, 0.5 + Math.random() * 0.3, 3, 1); }
+    if (tier < 2) return;
+    const n = tier >= 3 ? 240 : 130;
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * Math.PI * 2, out = 0.4 + Math.random() * (tier >= 3 ? 2.6 : 1.9);
+      this.spawn(p.x, p.y + 0.05, p.z, Math.cos(a) * out, 3.2 + Math.random() * (tier >= 3 ? 4.5 : 3.2), Math.sin(a) * out, CONFETTI[(Math.random() * CONFETTI.length) | 0], 0.03 + Math.random() * 0.025, 2 + Math.random() * 1.4, 4.2, 1.3, 2 + Math.random() * 3);
     }
   }
   /** Through a tree: a few leaves shaken loose, drifting down. */
@@ -102,7 +130,7 @@ export class Effects {
       const d = r.userData; d.t += dt; const u = (d.t - d.delay) / d.dur;
       if (u < 0) continue;
       if (u >= 1) { r.visible = false; continue; }
-      r.scale.setScalar(0.1 + d.to * (1 - (1 - u) * (1 - u))); r.material.opacity = 0.5 * (1 - u) * Math.min(1, u * 8);
+      r.scale.setScalar(0.1 + d.to * (1 - (1 - u) * (1 - u))); r.material.opacity = (d.peak || 0.5) * (1 - u) * Math.min(1, u * 8);
     }
     if (!this.live) return;
     let live = 0;

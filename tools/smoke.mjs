@@ -48,9 +48,11 @@ try {
   console.log(`start screen reached in ${((Date.now() - t0) / 1000).toFixed(1)}s (${mobile ? 'phone' : 'desktop'} profile, loading label ${loading ? 'still present' : 'replaced'})`);
   // Pick a player and a course, then let the sim run a few seconds to make sure the play loop does not throw.
   await page.fill('#panel input', 'smoke');
-  await page.click('#panel .pnew .btn');
+  // clicks go through the page itself: the panels animate in, and under the software renderer a frame can
+  // take long enough that Playwright's own click (which waits for the element to hold still) times out
+  await page.evaluate(() => document.querySelector('#panel .pnew .btn').click());
   await page.waitForFunction(() => document.querySelector('#panel .btn') && !document.querySelector('#panel input'), null, { timeout: 10000 });
-  await page.locator('#panel .btn').first().click();
+  await page.evaluate(() => document.querySelector('#panel .btn').click());
   await page.waitForFunction(() => window.__game.state !== 'title', null, { timeout: 10000 });
   const state = await page.evaluate(() => { window.__game.paused = true; return window.__game.step(8); });
   console.log(`played 8 simulated seconds, game state now "${state}"`);
