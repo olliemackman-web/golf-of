@@ -106,8 +106,8 @@ export function barkTexture({ w = 256, h = 512, seed = 21 } = {}) {
     const n = fbm(x / w * 12, y / h * 3, 4, 2, 0.5, 12);
     const streak = fbm(x / w * 48, y / h * 2, 3, 2, 0.6, 48);
     const ridge = 1 - Math.abs(fbm(x / w * 24, y / h * 1.5, 2, 2, 0.5, 24));
-    const l = 17 + n * 6 + streak * 7 + ridge * 6;
-    const rgb = hslToRgb((26 + n * 10) / 360, 0.13 + Math.max(0, n) * 0.06, clamp(l, 0, 100) / 100);
+    const l = 25 + n * 7 + streak * 8 + ridge * 7;
+    const rgb = hslToRgb((28 + n * 10) / 360, 0.12 + Math.max(0, n) * 0.06, clamp(l, 0, 100) / 100);
     const i = (y * w + x) * 4; d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
@@ -161,7 +161,7 @@ export function leafCardTexture({ size = 256, seed = 31, hue = 100, conifer = fa
       ctx.quadraticCurveTo(wid, -len * 0.1, 0, len * 0.5);
       ctx.quadraticCurveTo(-wid, -len * 0.1, 0, -len * 0.5);
       ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.8;
+      ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth = 0.5;
       ctx.beginPath(); ctx.moveTo(0, -len * 0.45); ctx.lineTo(0, len * 0.45); ctx.stroke();
       ctx.restore();
     };
@@ -169,10 +169,10 @@ export function leafCardTexture({ size = 256, seed = 31, hue = 100, conifer = fa
     for (let b = 0; b < 6; b++) {
       const ba = (b / 6) * Math.PI * 2 + (rnd() - 0.5) * 0.8, bl = size * (0.22 + rnd() * 0.18);
       const ex = cx + Math.cos(ba) * bl, ey = cy + Math.sin(ba) * bl;
-      ctx.lineWidth = 2.2; ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.6; ctx.globalAlpha = 1;
       ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
     }
-    const total = 150;
+    const total = 620; // many small leaves: a card is a spray of foliage, not a handful of big leaves
     for (let i = 0; i < total; i++) {
       // radius biased outward so the silhouette is full, with a soft fall-off at the very edge
       const rr = Math.pow(rnd(), 0.6) * size * 0.46, a = rnd() * Math.PI * 2;
@@ -180,7 +180,7 @@ export function leafCardTexture({ size = 256, seed = 31, hue = 100, conifer = fa
       const depth = rr / (size * 0.46);                       // 0 centre .. 1 edge
       const edgeFade = 1 - Math.max(0, (depth - 0.86) / 0.14); // thin out at the rim
       if (rnd() > edgeFade + 0.15) continue;
-      const len = 22 + rnd() * 20, wid = len * (0.28 + rnd() * 0.16);
+      const len = 9 + rnd() * 9, wid = len * (0.3 + rnd() * 0.18);
       const l = 17 + depth * 13 + rnd() * 10, sat = 33 + rnd() * 16;
       leaf(x, y, a + Math.PI / 2 + (rnd() - 0.5) * 1.2, len, wid, l, sat, 0.85 + rnd() * 0.15);
     }
@@ -190,14 +190,14 @@ export function leafCardTexture({ size = 256, seed = 31, hue = 100, conifer = fa
 }
 
 /** A tuft of tapered grass blades fanning up from the bottom centre, dark at the root. */
-export function grassBladeTexture({ w = 128, h = 256, seed = 41, hue = 88 } = {}) {
+export function grassBladeTexture({ w = 128, h = 256, seed = 41, hue = 88, dry: allDry = false } = {}) {
   const c = canvas(w, h), ctx = c.getContext('2d');
   const rnd = mulberry32(seed);
   ctx.clearRect(0, 0, w, h);
   for (let i = 0; i < 14; i++) {
     const x0 = w / 2 + (rnd() - 0.5) * 34, top = 6 + rnd() * 70;
     const lean = (rnd() - 0.5) * 80, width = 2.5 + rnd() * 4;
-    const dry = rnd() < 0.25; // the odd straw-coloured blade
+    const dry = allDry ? rnd() < 0.8 : rnd() < 0.25; // the odd straw-coloured blade (most of them, for fescue)
     const g = ctx.createLinearGradient(0, h, 0, top);
     g.addColorStop(0, hsl(hue - 12, 35, 15));
     g.addColorStop(0.55, hsl(hue + rnd() * 8, dry ? 30 : 42, dry ? 36 : 30 + rnd() * 7));
@@ -208,6 +208,10 @@ export function grassBladeTexture({ w = 128, h = 256, seed = 41, hue = 88 } = {}
     ctx.quadraticCurveTo(x0 + lean * 0.3 - width * 0.4, (h + top) / 2, x0 + lean, top);
     ctx.quadraticCurveTo(x0 + lean * 0.3 + width * 0.4, (h + top) / 2, x0 + width, h);
     ctx.closePath(); ctx.fill();
+    if (allDry && rnd() < 0.6) { // a feathery seed head at the tip
+      ctx.fillStyle = hsl(44 + rnd() * 10, 46, 58 + rnd() * 10);
+      ctx.save(); ctx.translate(x0 + lean, top + 6); ctx.rotate(lean / 90); ctx.beginPath(); ctx.ellipse(0, 0, 2.6, 11, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
   }
   return c;
 }

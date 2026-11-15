@@ -70,7 +70,8 @@ Pick or create a player on the start screen. Profiles live in the browser's loca
 - `src/courseData.js` — `makeHole(n)` designs each of the 18 holes from a seed; heightmap, surface mask and physics lookups for the hole in play (no three.js; runs in node — `node tools/holes.mjs` lists the course).
 - `src/physics.js` — ball flight (drag + Magnus), bounce, roll, hole capture, club table. `tools/calibrate.mjs` prints carry per club.
 - `src/terrain.js` — terrain splat shader (rough / first cut / view-dependent mown stripes / green / bunkers with shaded lips / water, plus a baked canopy-shadow map from the trees), water, far hills, gradient sky dome + environment map, clouds, cup + flag.
-- `src/vegetation.js` — instanced trees (trunks + leaf cards), grass tufts, reeds, tree collisions.
+- `src/vegetation.js` — instanced trees (trunks, a dark crown core and leaf cards), `GrassPatch` (individual blades around the ball), golden fescue in the native-grass zones (`fescueWeight` in `courseData.js`), reeds, tree collisions.
+- `src/effects.js` — the strike flash, the landing ring and the confetti when a putt drops, and what the ball kicks up: turf from an iron, sand from a bunker, a splash and ripples from water, leaves from a tree, a puff where it lands.
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
 - `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.
 - `styles.css` — all of the interface styling: design tokens at the top (pine glass panels, ivory type, one lime accent), then the HUD, the overlay panels and scorecard, the modals, and the phone layouts. `src/hud.js` builds the HUD markup and draws the minimap.

@@ -2,7 +2,7 @@
 // the tree collision field the ball physics calls into.
 import * as THREE from 'three';
 import { mulberry32, fbm, smoothstep } from './noise.js';
-import { splineDist, ellipseDist, SURF, alongHole, ponds } from './courseData.js';
+import { splineDist, ellipseDist, SURF, alongHole, ponds, fescueWeight } from './courseData.js';
 import { BALL_R } from './physics.js';
 
 const windUniform = { value: 0 };
@@ -28,6 +28,63 @@ wp.xyz += vec3(sway, sway * 0.15, sway * 0.5) * ${amp.toFixed(3)} * weight;
 mvPosition = viewMatrix * wp;
 gl_Position = projectionMatrix * mvPosition;`);
   };
+}
+
+/**
+ * Individual grass blades in a disc around the ball, so the ground under the golfer's eyes is
+ * grass and not a painted texture. One instanced mesh, laid out again each time the ball comes
+ * to rest: long blades in the rough, a short nap on the fairway, nothing on greens, tees or sand.
+ */
+export class GrassPatch {
+  /** `grassCanvas` is the turf texture's canvas: the blades take its average colour so they match the ground. */
+  constructor(count = 12000, radius = 3.6, grassCanvas = null) {
+    this.count = count; this.radius = radius;
+    this.base = [0.09, 0.2, 0.05];
+    if (grassCanvas && grassCanvas.getContext) {
+      const d = grassCanvas.getContext('2d').getImageData(0, 0, grassCanvas.width, grassCanvas.height).data, lin = (u) => Math.pow(u / 255, 2.2);
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4 * 37) { r += lin(d[i]); g += lin(d[i + 1]); b += lin(d[i + 2]); n++; }
+      this.base = [r / n, g / n, b / n];
+    }
+    // a tapered, slightly bent blade; normals point up so it takes the light like the turf under it
+    const P = [[-0.5, 0], [0.5, 0], [-0.32, 0.5], [0.32, 0.5], [0, 1]];
+    const pos = [], uv = [], nor = [], col = [];
+    for (const [x, y] of P) { pos.push(x, y, 0.28 * y * y); uv.push(x + 0.5, y); nor.push(0, 1, 0); const c = 0.62 + 0.62 * y; col.push(c, c, c * 0.92); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    // both windings, single-sided: a double-sided material would flip the normal on the far face and black it out
+    geo.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 0, 2, 1, 1, 2, 3, 2, 4, 3]);
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+    addWind(mat, { byUv: true, amp: 0.014, freq: 1.7 });
+    this.mesh = new THREE.InstancedMesh(geo, mat, count);
+    this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; this.mesh.visible = false;
+    // fixed scatter, denser toward the middle where the eye is
+    const rnd = mulberry32(977); this.spots = new Float32Array(count * 5);
+    for (let i = 0; i < count; i++) { const a = rnd() * Math.PI * 2, r = radius * Math.pow(rnd(), 0.72); this.spots.set([Math.cos(a) * r, Math.sin(a) * r, rnd(), rnd(), rnd()], i * 5); }
+  }
+
+  /** Lay the blades out around (cx, cz) on this course. */
+  place(course, cx, cz) {
+    const L = course.layout, R = this.radius, S = this.spots, B = this.base;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), s = new THREE.Vector3(), c = new THREE.Color();
+    for (let i = 0; i < this.count; i++) {
+      const ox = S[i * 5], oz = S[i * 5 + 1], r1 = S[i * 5 + 2], r2 = S[i * 5 + 3], r3 = S[i * 5 + 4];
+      const x = cx + ox, z = cz + oz, r = Math.hypot(ox, oz);
+      const sf = course.surfaceAt(x, z).id;
+      let h = 0, w = 0;
+      if (sf === SURF.ROUGH && fescueWeight(L, x, z) < 0.3) { h = 0.05 + r1 * 0.06; w = 0.009 + r2 * 0.008; const k = 1.0 + r3 * 0.45; c.setRGB(B[0] * 0.62 * k, B[1] * 0.78 * k, B[2] * 0.46 * k); }
+      else if (sf === SURF.FAIRWAY && r < R * 0.7) { h = 0.014 + r1 * 0.012; w = 0.007 + r2 * 0.005; const k = 0.9 + r3 * 0.25; c.setRGB(B[0] * 1.02 * k, B[1] * 1.2 * k, B[2] * 0.6 * k); }
+      // thin out toward the rim so the patch has no edge, and keep the ball itself in view
+      h *= (1 - smoothstep(R * 0.6, R, r)) * (0.4 + 0.6 * smoothstep(0.05, 0.3, r));
+      if (h <= 0.002) { m.makeScale(0, 0, 0); this.mesh.setMatrixAt(i, m); continue; }
+      e.set((r1 - 0.5) * 0.5, r2 * Math.PI * 2, (r3 - 0.5) * 0.5);
+      m.compose(p.set(x, course.heightAt(x, z) - 0.004, z), q.setFromEuler(e), s.set(w, h, w));
+      this.mesh.setMatrixAt(i, m); this.mesh.setColorAt(i, c);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true; if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.mesh.visible = true;
+  }
 }
 
 export class TreeField {
@@ -91,7 +148,7 @@ export class TreeField {
 }
 
 export function buildVegetation(course, tex, quality = {}) {
-  const CARDS_B = quality.cardsBroad || 52, CARDS_C = quality.cardsConifer || 64, MAX_TUFTS = quality.tufts || 60000, MAX_REEDS = quality.reeds || 9000;
+  const CARDS_B = quality.cardsBroad || 84, CARDS_C = quality.cardsConifer || 64, MAX_TUFTS = quality.tufts || 60000, MAX_REEDS = quality.reeds || 9000;
   const rnd = mulberry32(2024);
   const group = new THREE.Group();
   const field = new TreeField();
@@ -115,8 +172,8 @@ export function buildVegetation(course, tex, quality = {}) {
   const specs = [];
   const addTree = (x, z, forceKind, o = {}) => {
     const n = fbm(x / 70 + 4, z / 70 - 6, 2);
-    const conifer = forceKind != null ? forceKind : (n > 0.15 ? rnd() < 0.75 : rnd() < 0.2);
-    const h = o.h || (conifer ? 11 + rnd() * 9 : 8 + rnd() * 7);
+    const conifer = forceKind != null ? forceKind : (n > 0.3 ? rnd() < 0.5 : rnd() < 0.08); // parkland: mostly broadleaf, with stands of pine
+    const h = o.h || (conifer ? 11 + rnd() * 8 : 8.5 + rnd() * 8);
     const trunkR = o.trunkR || 0.18 + h * 0.022 + rnd() * 0.08;
     const canopyR = o.canopyR || (conifer ? h * 0.2 + rnd() * 0.8 : h * 0.36 + rnd() * 1.2);
     const y = course.heightAt(x, z) - 0.15;
@@ -162,7 +219,7 @@ export function buildVegetation(course, tex, quality = {}) {
     const k = Math.floor(rnd() * (L.spline.length - 1)), u = rnd();
     const sx = L.spline[k][0] + (L.spline[k + 1][0] - L.spline[k][0]) * u, sz = L.spline[k][1] + (L.spline[k + 1][1] - L.spline[k][1]) * u;
     const x = sx + Math.cos(a) * r, z = sz + Math.sin(a) * r;
-    if (okSpot(x, z, 27)) addTree(x, z);
+    if (okSpot(x, z, 33)) addTree(x, z);
   }
   // Perimeter woodland
   for (let i = 0; i < 2600; i++) {
@@ -209,6 +266,23 @@ export function buildVegetation(course, tex, quality = {}) {
   });
   group.add(trunks);
 
+  // ---- Crown cores: a dark, solid mass inside each canopy so the leaf cards read as the lit skin
+  // of a full tree and the sky does not show through the middle ----
+  const crowned = specs.filter((t) => !t.noCards);
+  const coreMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0, flatShading: false });
+  const mkCores = (list, geo, place) => {
+    if (!list.length) return;
+    const mesh = new THREE.InstancedMesh(geo, coreMat, list.length);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    const cc = new THREE.Color();
+    list.forEach((t, i) => { place(t); mesh.setMatrixAt(i, m); const k = 0.75 + 0.25 * t.tint; mesh.setColorAt(i, cc.setRGB(0.019 * k, 0.046 * k, 0.015 * k)); });
+    group.add(mesh);
+  };
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  mkCores(crowned.filter((t) => !t.conifer), new THREE.IcosahedronGeometry(1, 2), (t) => m.compose(pv.set(t.x, t.y + t.canopyY, t.z), q.setFromAxisAngle(yAxis, t.rot), s.set(t.canopyR * 0.55, t.canopyRy * 0.5, t.canopyR * 0.55)));
+  const coneGeo = new THREE.ConeGeometry(1, 1, 9, 1); coneGeo.translate(0, 0.5, 0);
+  mkCores(crowned.filter((t) => t.conifer), coneGeo, (t) => m.compose(pv.set(t.x, t.y + t.h * 0.3, t.z), q.setFromAxisAngle(yAxis, t.rot), s.set(t.canopyR * 0.5, t.h * 0.6, t.canopyR * 0.5)));
+
   // ---- Canopies: leaf cards ----
   const cardGeo = new THREE.PlaneGeometry(1, 1);
   const nCards = (t, conifer) => t.cards || (conifer ? CARDS_C : CARDS_B);
@@ -241,7 +315,7 @@ export function buildVegetation(course, tex, quality = {}) {
           const a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1), rr = t.canopyR * Math.pow(rnd(), 0.42) * 0.95;
           px = Math.sin(b) * Math.cos(a) * rr; pz = Math.sin(b) * Math.sin(a) * rr; py = t.canopyY + Math.cos(b) * rr * 0.8;
           hf = 0.5 + Math.cos(b) * rr * 0.8 / (2 * t.canopyRy);
-          size = t.canopyR * (0.6 + rnd() * 0.5);
+          size = t.canopyR * (0.5 + rnd() * 0.42);
         }
         if (conifer) {
           q.setFromEuler(new THREE.Euler(-0.9 + rnd() * 0.5, Math.atan2(px, pz) + (rnd() - 0.5), (rnd() - 0.5) * 0.4));
@@ -280,19 +354,21 @@ export function buildVegetation(course, tex, quality = {}) {
   })();
   const tuftMat = new THREE.MeshStandardMaterial({ map: tex.blade, alphaTest: quality.aa ? 0.35 : 0.5, alphaToCoverage: !!quality.aa, side: THREE.DoubleSide, roughness: 1 });
   addWind(tuftMat, { byUv: true, amp: 0.09, freq: 1.4 });
-  const tuftSpots = [];
-  for (let i = 0; i < 260000; i++) {
+  // Tall golden fescue fills the native-grass zones; the mown rough only gets the odd small tuft,
+  // coloured like the ground so it reads as texture and not as dots.
+  const tuftSpots = [], fescueSpots = [];
+  const tuftScale = sc && sc.tufts != null ? sc.tufts : 1, MAX_FESCUE = Math.round(MAX_TUFTS * Math.max(0.4, tuftScale)), MAX_ROUGH = 0; // loose tufts in the mown rough only ever read as debris
+  for (let i = 0; i < 300000; i++) {
     const x = (rnd() - 0.5) * (L.size - 40), z = (rnd() - 0.5) * (L.size - 40);
     const { d } = splineDist(L, x, z);
     if (d > 95) continue;
     const sf = course.surfaceAt(x, z);
     if (sf.id !== SURF.ROUGH) continue;
-    if (L.pond && ellipseDist(x, z, L.pond) < 1.15) continue;
-    // denser near the fairway edge, thinning further out
-    const keep = 0.25 + 0.75 * (1 - smoothstep(20, 70, d));
-    if (rnd() > keep) continue;
-    tuftSpots.push({ x, z, reed: false });
-    if (tuftSpots.length >= MAX_TUFTS * (sc && sc.tufts != null ? sc.tufts : 1)) break;
+    if (ponds(L).some((q) => ellipseDist(x, z, q) < 1.15)) continue;
+    const fw = fescueWeight(L, x, z);
+    if (fw > 0.3) { if (fescueSpots.length < MAX_FESCUE && rnd() < fw) fescueSpots.push({ x, z }); }
+    else if (fw < 0.05 && tuftSpots.length < MAX_ROUGH && rnd() < 0.12) tuftSpots.push({ x, z, reed: false });
+    if (fescueSpots.length >= MAX_FESCUE && tuftSpots.length >= MAX_ROUGH) break;
   }
   for (const q of ponds(L)) for (let i = 0; i < MAX_REEDS; i++) {
     const a = rnd() * Math.PI * 2, rr = 1.0 + rnd() * 0.12;
@@ -307,15 +383,30 @@ export function buildVegetation(course, tex, quality = {}) {
   const col = new THREE.Color();
   tuftSpots.forEach((t, i) => {
     const y = course.heightAt(t.x, t.z) - 0.02;
-    const sc = t.reed ? 0.45 + rnd() * 0.35 : 0.4 + rnd() * 0.4;
-    const hgt = t.reed ? 1.0 + rnd() * 0.7 : 0.3 + rnd() * 0.32;
+    const sc = t.reed ? 0.45 + rnd() * 0.35 : 0.3 + rnd() * 0.3;
+    const hgt = t.reed ? 1.0 + rnd() * 0.7 : 0.14 + rnd() * 0.16;
     m.compose(pv.set(t.x, y, t.z), q.setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.25, rnd() * Math.PI, (rnd() - 0.5) * 0.25)), s.set(sc, hgt, sc));
     tufts.setMatrixAt(i, m);
     // tufts sit in the rough's own colour range rather than glowing above it
-    if (t.reed) col.setRGB(0.72 + rnd() * 0.2, 0.60 + rnd() * 0.15, 0.34); else { const v = 0.55 + rnd() * 0.4; col.setRGB(v * (0.88 + rnd() * 0.18), v, v * 0.6); }
+    if (t.reed) col.setRGB(0.72 + rnd() * 0.2, 0.60 + rnd() * 0.15, 0.34); else { const v = 0.62 + rnd() * 0.3; col.setRGB(v * (0.86 + rnd() * 0.14), v * 1.02, v * 0.62); }
     tufts.setColorAt(i, col);
   });
   group.add(tufts);
+  if (fescueSpots.length) {
+    const fesMat = new THREE.MeshStandardMaterial({ map: tex.bladeDry, alphaTest: quality.aa ? 0.35 : 0.5, alphaToCoverage: !!quality.aa, side: THREE.DoubleSide, roughness: 1 });
+    addWind(fesMat, { byUv: true, amp: 0.16, freq: 1.25 });
+    const fescue = new THREE.InstancedMesh(tuftGeo, fesMat, fescueSpots.length);
+    fescue.receiveShadow = true;
+    fescueSpots.forEach((t, i) => {
+      const y = course.heightAt(t.x, t.z) - 0.03;
+      const w = 0.8 + rnd() * 0.7, hgt = 0.55 + rnd() * 0.55;
+      m.compose(pv.set(t.x, y, t.z), q.setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.3, rnd() * Math.PI, (rnd() - 0.5) * 0.3)), s.set(w, hgt, w));
+      fescue.setMatrixAt(i, m);
+      const b = 0.8 + rnd() * 0.4, g = rnd() < 0.25 ? 1.12 : 1; // the odd greener clump
+      fescue.setColorAt(i, col.setRGB(b * (g > 1 ? 0.86 : 1.06), b * g, b * 0.82));
+    });
+    group.add(fescue);
+  }
 
   return { group, field, count: specs.length, tufts: tuftSpots.length, ao };
 }

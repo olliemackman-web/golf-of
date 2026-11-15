@@ -10,11 +10,12 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
 import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
-import { buildVegetation, setWindTime, TreeField } from './vegetation.js';
+import { buildVegetation, setWindTime, TreeField, GrassPatch } from './vegetation.js';
 import { buildAsteroids } from './space.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
 import { GameAudio } from './audio.js';
+import { Effects } from './effects.js';
 import { ProfileStore, coinsFor, UPGRADES } from './profile.js';
 import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
@@ -22,8 +23,9 @@ import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
 const UP = new THREE.Vector3(0, 1, 0);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const T_METER = 1.15, T_METER_PUTT = 1.9, T_DOWN = 0.32, T_DOWN_PUTT = 0.36, T_ACC = 0.75, T_ACC_PUTT = 0.9;
+const TEE_H = 0.028; // how far a teed ball sits above the turf
 const ZOOM_MAX = 5, ZOOM_STEPS = [1, 1.6, 2.5, 4];
-import { ACC_BANDS } from './hud.js';
+import { ACC_BANDS, accBand } from './hud.js';
 
 /** A screen-space-width line over a fixed buffer of `maxPts` points; fill it with writeFatLine. */
 function fatLine(maxPts, opts, geo = null) {
@@ -62,7 +64,7 @@ class Game {
     const small = Math.min(window.innerWidth, window.innerHeight) < 600 || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
     this.isMobile = coarse || small;
     this.quality = this.isMobile
-      ? { dpr: Math.min(window.devicePixelRatio, 1.5), shadow: 2048, shadowRange: 70, bloom: false, msaa: 0, veg: { cardsBroad: 34, cardsConifer: 44, tufts: 18000, reeds: 3500, aa: true } }
+      ? { dpr: Math.min(window.devicePixelRatio, 1.5), shadow: 2048, shadowRange: 70, bloom: false, msaa: 0, veg: { cardsBroad: 44, cardsConifer: 44, tufts: 18000, reeds: 3500, aa: true } }
       : { dpr: Math.min(window.devicePixelRatio, 1.75), shadow: 4096, shadowRange: 95, bloom: true, msaa: 4, veg: { aa: true } };
     // antialias on for both tiers: on phones the default framebuffer MSAA is nearly free and it is what
     // stops the foliage and grass edges shimmering; alpha-to-coverage rides on it.
@@ -73,7 +75,7 @@ class Game {
     r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.12;
     const scene = this.scene = new THREE.Scene();
     // fog colour matches the sky dome at the horizon so distant trees and hills melt into it
-    scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.00054);
+    scene.fog = new THREE.FogExp2(HORIZON.clone(), 0.0008);
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.05, 6000);
     this.lookDir = new THREE.Vector3(0, 0, 1);
 
@@ -133,6 +135,14 @@ class Game {
     this.landRing.rotation.x = -Math.PI / 2; this.landRing.renderOrder = 21; scene.add(this.landRing);
 
     this.golfer = new Golfer(); this.golfer.group.visible = false; scene.add(this.golfer.group);
+    // tee peg under the ball for the first shot of each hole
+    const pegMat = new THREE.MeshStandardMaterial({ color: 0xf2ead6, roughness: 0.6 });
+    this.peg = new THREE.Group();
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.0034, 0.0014, 0.05, 8), pegMat); stem.position.y = -0.025; this.peg.add(stem);
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.0075, 0.0034, 0.007, 10), pegMat); cup.position.y = -0.0035; this.peg.add(cup);
+    this.peg.visible = false; scene.add(this.peg);
+    this.fx = new Effects(scene); this.fx.ground = (x, z) => this.groundY(x, z);
+    this.grass = new GrassPatch(this.isMobile ? 6000 : 16000, 3.6, this.tex.grass.image); scene.add(this.grass.mesh);
 
     // post
     if (this.quality.bloom) {
@@ -144,7 +154,7 @@ class Game {
       this.composer.addPass(new OutputPass());
       // final grade: a touch more saturation and contrast, and a soft vignette to frame the view
       this.composer.addPass(new ShaderPass({
-        uniforms: { tDiffuse: { value: null }, uVignette: { value: 0.3 }, uSat: { value: 1.08 }, uContrast: { value: 1.05 } },
+        uniforms: { tDiffuse: { value: null }, uVignette: { value: 0.3 }, uSat: { value: 1.03 }, uContrast: { value: 1.05 } },
         vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
         fragmentShader: `uniform sampler2D tDiffuse; uniform float uVignette, uSat, uContrast; varying vec2 vUv;
           void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
@@ -190,7 +200,7 @@ class Game {
       const shared = new Set(Object.values(this.tex));
       this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.map && !shared.has(m.map)) m.map.dispose(); if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
-      if (this.terrain) { this.terrain.maskTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
+      if (this.terrain) { this.terrain.maskTex.dispose(); this.terrain.zoneTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
     }
     progress('SHAPING THE LAND…'); await this.frame();
     this.holeIndex = n;
@@ -213,6 +223,7 @@ class Game {
     }
     if (this.ball) { this.ball.course = this.course; this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin; }
     if (this.hud) this.hud.setHole(this.course);
+    if (this.grass) this.grass.mesh.visible = false; // laid out again when the first shot is lined up
   }
 
   get L() { return this.course.layout; }
@@ -224,7 +235,7 @@ class Game {
   applyAtmosphere(space) {
     this.envMap = this.skyCtl.setSpace(space);
     this.scene.fog.color.set(space ? 0x000000 : HORIZON);
-    this.scene.fog.density = space ? 0.0011 : 0.00054;
+    this.scene.fog.density = space ? 0.0011 : 0.0008;
     this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.62;
     this.sun.color.set(space ? 0xfff6ea : 0xffe7c4); this.sun.intensity = space ? 3.4 : 3.1;
     if (this.clouds) this.clouds.visible = !space;
@@ -259,6 +270,7 @@ class Game {
   newHole() {
     this.strokes = 1; this.penalties = 0; this.endShown = false;
     this.ball.place(this.L.tee.x, this.L.tee.z);
+    this.teed = true; this.peg.visible = true; this.peg.rotation.set(0, 0, 0); this.pegFly = null; this.hud.banner(''); this.hud.setFlight(null);
     this.trail.visible = false; this.blob.visible = false; this.trailPts.length = 0;
     this.aimView = 'behind'; this.previewEnd = null; this.previewPath = null; this.landingCam = null; this.puttCam = null;
     this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN'); this.aimZoom = 1; this.hud.setZoomLabel(1);
@@ -353,6 +365,7 @@ class Game {
 
   enterAim() {
     this.state = 'aim';
+    this.grass.place(this.course, this.ball.pos.x, this.ball.pos.z);
     this.golfer.group.visible = false;
     this.applyAimFov();
     if (this.club.putter) this.placePutterRig();
@@ -526,7 +539,12 @@ class Game {
     const look = new THREE.Vector3(b.x, b.y, b.z).addScaledVector(dir, 28).addScaledVector(right, 0.5).add(new THREE.Vector3(0, 0.6, 0));
     return { pos, look };
   }
-  syncBallMesh() { this.ballMesh.position.set(this.ball.pos.x, this.ball.pos.y, this.ball.pos.z); }
+  syncBallMesh() {
+    const p = this.ball.pos, t = this.L.tee;
+    if (this.teed && Math.hypot(p.x - t.x, p.z - t.z) > 0.5) { this.teed = false; this.peg.visible = false; } // moved off the tee by hand
+    this.ballMesh.position.set(p.x, p.y + (this.teed ? TEE_H : 0), p.z);
+    if (this.teed) this.peg.position.set(p.x, p.y - BALL_R + TEE_H, p.z);
+  }
 
   updatePreview() {
     const dir = this.aimDir();
@@ -721,6 +739,8 @@ class Game {
     if (s.phase !== 'acc') return;
     s.acc = (s.pos - 0.5) * 2; // -1 left .. +1 right of centre
     this.hud.accuracy({ pos: s.pos, hit: s.pos });
+    const band = accBand(s.acc).name, right = s.acc > 0;
+    this.hud.callout(band === 'gold' ? 'Perfect!' : band === 'green' ? 'Good' : this.club.putter ? (right ? 'Pushed' : 'Pulled') : band === 'amber' ? (right ? 'Pushed' : 'Pulled') : (right ? 'Slice!' : 'Hook!'), band);
     s.phase = 'down'; s.t = 0;
     this.golfer.beginDownswing(this.club.putter ? T_DOWN_PUTT : T_DOWN, () => this.impact());
     this.hud.setSwingLabel('');
@@ -760,6 +780,18 @@ class Game {
     this.ball.wind.x = this.windBase.x; this.ball.wind.z = this.windBase.z;
     this.ball.launch(dir, params.speed, params.loft, params.back, params.side, params.land || 0);
     this.shotLie = lie; this.shotClub = this.club; this.shotStart = { x: this.ball.pos.x, z: this.ball.pos.z }; this.shotAim = this.aimDir();
+    // off the peg or through the turf: the ball leaves its tee, an iron takes a divot, a bunker shot throws sand
+    const wasTeed = this.teed; this.teed = false;
+    this.shake = { t: 0, dur: this.club.putter ? 0 : 0.28, amp: 0.012 + 0.03 * s.power * (this.club.wood ? 1 : 0.7) };
+    this.firstLand = false; this.flightMax = 0;
+    if (!this.club.putter) {
+      const bp = this.ball.pos, fxp = { x: bp.x, y: bp.y - BALL_R, z: bp.z };
+      this.fx.flash({ x: bp.x, y: bp.y + (wasTeed ? TEE_H : 0), z: bp.z }, dir, s.power);
+      // a driver sends the peg cartwheeling
+      if (wasTeed && this.club.wood) this.pegFly = { vx: dir.x * 2.2 + (this.rnd() - 0.5), vy: 2.6 + this.rnd(), vz: dir.z * 2.2 + (this.rnd() - 0.5), spin: 14 + this.rnd() * 10 };
+      if (lie === SURF.SAND) this.fx.sand(fxp, dir, s.power);
+      else if (!wasTeed || !this.club.wood) this.fx.turf(fxp, dir, s.power * (wasTeed ? 0.5 : 1));
+    }
     this.lockShot = null;
     if (this.holeLock) {
       // code 1111: replace the physics with a guided path from here to the cup
@@ -789,6 +821,8 @@ class Game {
     if (this.water) for (const m of this.water.children) { const sh = m.material.userData.shader; if (sh) sh.uniforms.tMask.value = this.terrain.maskTex; }
     this.tex.waterNormal.offset.set(this.time * 0.012, this.time * 0.007);
     this.ribbonMat.uniforms.uTime.value = this.time;
+    this.fx.update(dt, this.camera, this.renderer.domElement.height);
+    if (this.pegFly) this.updatePegFly(dt);
     const aimDir = this.aimDir();
     // dial: wind relative to the aim line, + = blowing toward the player's right
     { const wb = this.windBase; const along = wb.x * aimDir.x + wb.z * aimDir.z, lateral = -wb.x * aimDir.z + wb.z * aimDir.x; this.hud.setWind(wb.speed, Math.atan2(lateral, along)); }
@@ -803,6 +837,11 @@ class Game {
       case 'settle': this.updateSettle(dt); break;
       case 'walk': this.updateWalk(dt); break;
       case 'holed': this.updateHoled(dt); break;
+    }
+    // the strike jolts the view for a moment
+    if (this.shake && this.shake.t < this.shake.dur) {
+      const k = this.shake; k.t += dt; const a = k.amp * Math.pow(1 - Math.min(1, k.t / k.dur), 2);
+      this.camera.position.x += (Math.random() - 0.5) * a; this.camera.position.y += (Math.random() - 0.5) * a; this.camera.position.z += (Math.random() - 0.5) * a;
     }
     this.updateSun();
     this.hud.drawMinimap(this.ball.pos, aimDir, this.state === 'aim' ? this.previewPath : null);
@@ -889,8 +928,8 @@ class Game {
     if (this.lockShot) this.stepLockShot(dt);
     else this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
     for (const ev of this.ball.events) {
-      if (ev.type === 'bounce') { this.audio.bounce(ev.speed); }
-      else if (ev.type === 'tree') { this.audio.tree(); this.hud.message('Off the trees!', 1600, 'bad'); }
+      if (ev.type === 'bounce') { if (!this.firstLand && !this.shotClub.putter) { this.firstLand = true; this.fx.landMark({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }); } this.audio.bounce(ev.speed); this.fx.puff({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }, ev.surface === SURF.SAND ? 'sand' : 'turf', ev.surface === SURF.GREEN ? ev.speed * 0.35 : ev.speed); }
+      else if (ev.type === 'tree') { this.audio.tree(); this.fx.leaves(this.ball.pos); this.hud.message('Off the trees!', 1600, 'bad'); }
       else if (ev.type === 'lipout') { this.hud.message('Lip out!', 1500, 'bad'); }
     }
     this.ball.events.length = 0;
@@ -916,10 +955,25 @@ class Game {
     this.blob.visible = this.ball.mode === 'fly' && hgt > 0.05;
     this.blob.position.set(this.ball.pos.x, gh + 0.03, this.ball.pos.z); const bs = 0.04 + hgt * 0.02; this.blob.scale.set(bs, bs, 1); this.blob.material.opacity = 0.45 / (1 + hgt * 0.12);
 
+    if (this.flightT > 0.7) { this.hud.showMeter(false); this.hud.showAccuracy(false); } // the swing gauges have done their job
+    // live carry and height while the ball is in the air
+    if (!this.shotClub.putter && !this.firstLand && this.ball.mode === 'fly') {
+      this.flightMax = Math.max(this.flightMax, hgt);
+      this.hud.setFlight(Math.hypot(this.ball.pos.x - this.shotStart.x, this.ball.pos.z - this.shotStart.z), this.flightMax);
+    }
     this.golfer.update(dt);
     this.updateFlightCamera(dt);
 
     if (this.ball.mode === 'rest' || this.ball.mode === 'water' || this.ball.mode === 'oob' || this.ball.mode === 'holed') this.onShotEnd();
+  }
+
+  /** The tee peg, knocked out by a driver: it tumbles forward and comes to rest on its side. */
+  updatePegFly(dt) {
+    const f = this.pegFly, p = this.peg.position;
+    f.vy -= 9.8 * dt; p.x += f.vx * dt; p.y += f.vy * dt; p.z += f.vz * dt;
+    this.peg.rotation.x += f.spin * dt; this.peg.rotation.z += f.spin * 0.6 * dt;
+    const g = this.groundY(p.x, p.z) + 0.006;
+    if (p.y <= g && f.vy < 0) { p.y = g; this.peg.rotation.set(Math.PI / 2, 0, this.peg.rotation.z); this.pegFly = null; }
   }
 
   /** Code 1111: carry the ball along an arc (a roll, for a putt) that ends in the cup. */
@@ -982,13 +1036,20 @@ class Game {
 
   onShotEnd() {
     const b = this.ball;
-    this.blob.visible = false; this.hud.showMeter(false); this.hud.showAccuracy(false);
+    this.blob.visible = false; this.hud.showMeter(false); this.hud.showAccuracy(false); this.hud.setFlight(null);
     if (b.mode === 'holed') {
       this.audio.cup(); this.state = 'holed'; this.holedT = 0;
       const total = this.strokes;
       const diff = total - this.L.par;
       const name = total === 1 ? 'HOLE IN ONE!' : diff <= -2 ? 'EAGLE!' : diff === -1 ? 'BIRDIE!' : diff === 0 ? 'PAR' : diff === 1 ? 'BOGEY' : diff === 2 ? 'DOUBLE BOGEY' : `+${diff}`;
-      this.hud.message(name, 0, 'good'); this.finalName = name; this.finalTotal = total; this.hud.setSwingLabel('');
+      this.finalName = name; this.finalTotal = total; this.hud.setSwingLabel(''); this.hud.clearMessage(); this.hud.setHint(''); this.hud.setCamTag('');
+      // the celebration scales with the result: nothing over par, a chime for par, confetti and applause under it
+      const tier = this.holeTier = total === 1 || diff <= -2 ? 3 : diff === -1 ? 2 : diff === 0 ? 1 : 0;
+      const pin = this.L.pin, py = this.groundY(pin.x, pin.z);
+      this.hud.banner(name, `HOLE ${this.L.number} · ${total} STROKE${total === 1 ? '' : 'S'}`, total === 1 ? 'ace' : diff < 0 ? 'under' : diff === 0 ? 'par' : 'over');
+      this.fx.celebrate({ x: pin.x, y: py, z: pin.z }, tier); this.audio.celebrate(tier); this.celebrateT = 0.55;
+      this.golfer.group.visible = false; this.trail.visible = false;
+      this.orbit0 = Math.atan2(this.camera.position.z - pin.z, this.camera.position.x - pin.x);
       this.scores[this.holeIndex] = { strokes: total, par: this.L.par, penalties: this.penalties }; this.updateRoundHud();
       this.holeCoins = coinsFor(total, this.L.par);
       if (this.profile) { this.store.addCoins(this.profile, this.holeCoins); this.hud.setCoins(this.profile.coins); }
@@ -997,7 +1058,7 @@ class Game {
     this.state = 'settle'; this.settleT = 0;
     const dist = Math.hypot(b.pos.x - this.shotStart.x, b.pos.z - this.shotStart.z);
     if (b.mode === 'water' && this.course.voidLevel != null) { this.hud.message('Lost in the void — one-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
-    else if (b.mode === 'water') { this.audio.splash(); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
+    else if (b.mode === 'water') { this.audio.splash(); this.fx.splash(b.pos, this.course.waterLevelAt(b.pos.x, b.pos.z)); this.hud.message('Splash! One-stroke penalty', 2600, 'bad'); this.penalty = 'water'; }
     else if (b.mode === 'oob') { this.hud.message('Out of bounds — penalty, replay', 2600, 'bad'); this.penalty = 'oob'; }
     else {
       this.penalty = null;
@@ -1021,7 +1082,7 @@ class Game {
       this.strokes += 1; this.penalties += 1;
       this.ball.place(this.lastPos.x, this.lastPos.z);
     } else { this.ball.mode = 'rest'; this.ball.pos.y = this.course.heightAt(this.ball.pos.x, this.ball.pos.z) + BALL_R; }
-    this.strokes += 1;
+    this.strokes += 1; this.peg.visible = false;
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     this.syncBallMesh();
     this.spinSel.x = 0; this.spinSel.y = 0; this.hud.setSpinLabel('SPIN');
@@ -1046,9 +1107,19 @@ class Game {
     this.holedT += dt; this.golfer.update(dt);
     // ball drops out of sight
     this.ballMesh.position.y = this.ball.pos.y - Math.min(0.1, this.holedT * 0.4);
-    if (this.holedT > 2.0 && !this.endShown) {
+    // the camera swings in and circles the cup while the result is up
+    const pin = this.L.pin, py = this.groundY(pin.x, pin.z), ang = this.orbit0 + this.holedT * 0.42;
+    const want = this.tmp.a.set(pin.x + Math.cos(ang) * 3.3, py + 1.15, pin.z + Math.sin(ang) * 3.3);
+    want.y = Math.max(want.y, this.groundY(want.x, want.z) + 0.5);
+    this.camera.position.lerp(want, 1 - Math.exp(-dt * 2.4));
+    const look = this.tmp.b.set(pin.x, py + 0.45, pin.z).sub(this.camera.position).normalize();
+    this.lookDir.lerp(look, 1 - Math.exp(-dt * 5)).normalize(); this.setLook();
+    this.camera.fov += (50 - this.camera.fov) * (1 - Math.exp(-dt * 3)); this.camera.updateProjectionMatrix();
+    // an eagle or an ace keeps the confetti coming for a moment
+    if (this.holeTier >= 3 && this.holedT < 2.2) { this.celebrateT -= dt; if (this.celebrateT <= 0) { this.celebrateT = 0.55; this.fx.celebrate({ x: pin.x, y: py, z: pin.z }, 2); } }
+    if (this.holedT > (this.holeTier >= 2 ? 3.2 : 2.3) && !this.endShown) {
       this.endShown = true;
-      this.hud.clearMessage();
+      this.hud.clearMessage(); this.hud.banner('');
       const played = this.scores.filter(Boolean);
       const toPar = played.reduce((a, s) => a + s.strokes - s.par, 0);
       const toParTxt = toPar === 0 ? 'E' : toPar > 0 ? `+${toPar}` : `${toPar}`;

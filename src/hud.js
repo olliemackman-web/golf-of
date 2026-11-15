@@ -66,7 +66,9 @@ export class Hud {
         </div>
         <canvas id="minimap" width="${MW}" height="${MH}"></canvas>
       </div>
-      <div class="tc"><div class="camtag" id="camtag"></div><div class="hint" id="hint"></div></div>
+      <div class="tc"><div class="camtag" id="camtag"></div><div class="flight" id="flight"><span><i>CARRY</i><b id="fcarry">0</b><u>yds</u></span><span><i>HEIGHT</i><b id="fheight">0</b><u>ft</u></span></div><div class="hint" id="hint"></div></div>
+      <div class="callout" id="callout"></div>
+      <div class="banner" id="banner"><div class="bn-sub" id="bnsub"></div><div class="bn-title" id="bntitle"></div></div>
       <div class="meter" id="meter"><div class="mlabel" id="mlabel">POWER</div><div class="mwrap"><div class="mbar"><div class="mzone"></div><div class="mfill" id="mfill"></div><div class="mticks"></div><div class="mmark" id="mmark"></div></div><div class="mset" id="mset"></div></div><div class="mpct" id="mpct"></div></div>
       <div class="aimtick" id="aimtick"></div>
       <div class="bottom">
@@ -88,7 +90,7 @@ export class Hud {
         <div class="target glass" id="target"><div class="tlabel">TARGET <b id="tval">100%</b><span id="tcarry"></span></div><input type="range" id="tpow" min="8" max="100" value="100" aria-label="Target power"></div>
       </div>`;
     this.el = {};
-    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hnum', 'hpar', 'hyds', 'hround', 'hthru', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing', 'aimtick', 'wtag']) this.el[id] = document.getElementById(id);
+    for (const id of ['lietxt', 'coins', 'btnShop', 'btnSpin', 'abar', 'apct', 'atri', 'amark', 'hname', 'hnum', 'hpar', 'hyds', 'hround', 'hthru', 'stroke', 'topin', 'lie', 'warrow', 'wspeed', 'minimap', 'meter', 'mlabel', 'mfill', 'mmark', 'mset', 'mpct', 'cname', 'cdist', 'msg', 'hint', 'camtag', 'target', 'tval', 'tcarry', 'tpow', 'btnView', 'btnZoom', 'btnCam', 'btnPrev', 'btnNext', 'btnSwing', 'aimtick', 'wtag', 'flight', 'fcarry', 'fheight', 'callout', 'banner', 'bnsub', 'bntitle']) this.el[id] = document.getElementById(id);
     this.msgTimer = null;
     this.buildMinimap();
   }
@@ -212,6 +214,24 @@ export class Hud {
   }
   /** Code 1111 armed: the pin chip lights up until the shot is struck. */
   setLock(on) { const chip = this.el.topin.parentElement; chip.classList.toggle('locked', on); chip.lastElementChild.textContent = on ? 'locked on' : 'to pin'; }
+  /** Strike quality, popped up for a moment as the club comes down. cls: gold | green | amber | red. */
+  callout(text, cls = '') {
+    const c = this.el.callout; c.textContent = text; c.className = 'callout'; void c.offsetWidth; c.className = 'callout show ' + cls;
+    clearTimeout(this.calloutTimer); this.calloutTimer = setTimeout(() => { c.className = 'callout'; }, 1300);
+  }
+  /** Live read-out while the ball is in the air; pass null to put it away. */
+  setFlight(carryM, heightM) {
+    const f = this.el.flight;
+    if (carryM == null) { f.classList.remove('show'); return; }
+    f.classList.add('show'); this.el.fcarry.textContent = yards(carryM); this.el.fheight.textContent = Math.round(heightM * 3.28084);
+  }
+  /** The big result when the ball drops: BIRDIE!, PAR... cls: ace | under | par | over. Empty title hides it. */
+  banner(title, sub = '', cls = '') {
+    const b = this.el.banner;
+    if (!title) { b.className = 'banner'; return; }
+    this.el.bntitle.innerHTML = [...title].map((ch, i) => `<span style="animation-delay:${(i * 0.035).toFixed(3)}s">${ch === ' ' ? '&nbsp;' : ch}</span>`).join('');
+    this.el.bnsub.textContent = sub; b.className = 'banner'; void b.offsetWidth; b.className = 'banner show ' + cls;
+  }
   clearMessage() { clearTimeout(this.msgTimer); this.el.msg.className = 'msg'; }
   showMeter(show) { this.el.meter.style.opacity = show ? 1 : 0; }
   showAccuracy(show) { this.el.abar.style.opacity = show ? 1 : 0; }

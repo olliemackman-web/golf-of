@@ -1,6 +1,6 @@
 // Terrain mesh + splat shader, water, far hills, sky, clouds, hole & flag.
 import * as THREE from 'three';
-import { splineDist } from './courseData.js';
+import { splineDist, fescueWeight } from './courseData.js';
 import { HOLE_R } from './physics.js';
 import { fbm } from './noise.js';
 import * as T from './textures.js';
@@ -16,11 +16,12 @@ export function buildTextures() {
   const leaf2 = T.makeTex(T.leafCardTexture({ seed: 77, hue: 86 }), { repeat: false });
   const needle = T.makeTex(T.leafCardTexture({ seed: 45, hue: 132, conifer: true }), { repeat: false });
   const blade = T.makeTex(T.grassBladeTexture(), { repeat: false });
+  const bladeDry = T.makeTex(T.grassBladeTexture({ seed: 43, hue: 50, dry: true }), { repeat: false });
   const cloud = T.makeTex(T.cloudTexture(), { repeat: false });
   const ballBump = T.makeTex(T.ballBumpTexture(), { srgb: false });
   const flag = T.makeTex(T.flagTexture(1), { repeat: false });
   const waterNormal = T.makeTex(T.normalFromCanvas(T.sandTexture({ seed: 99 }), 0.9), { srgb: false });
-  return { grass, grassNormal, sand, noise, bark, leaf, leaf2, needle, blade, cloud, ballBump, flag, waterNormal };
+  return { grass, grassNormal, sand, noise, bark, leaf, leaf2, needle, blade, bladeDry, cloud, ballBump, flag, waterNormal };
 }
 
 /**
@@ -62,7 +63,13 @@ export function buildTerrain(course, tex, sunDir = new THREE.Vector3(0.5, 0.7, 0
   const sunXZ = new THREE.Vector2(sunDir.x, sunDir.z).normalize();
   // Canopy occlusion is painted by the vegetation pass; until then a single black texel means "none".
   const noAO = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat); noAO.needsUpdate = true;
+  // Native-grass zones (golden fescue beyond the rough), sampled coarsely: the edges are soft anyway.
+  const ZR = 256, zone = new Uint8Array(ZR * ZR * 4);
+  if (!space) for (let j = 0; j < ZR; j++) for (let i = 0; i < ZR; i++) zone[(j * ZR + i) * 4] = fescueWeight(course.layout, -half + (i + 0.5) * size / ZR, -half + (j + 0.5) * size / ZR) * 255;
+  const zoneTex = new THREE.DataTexture(zone, ZR, ZR, THREE.RGBAFormat);
+  zoneTex.needsUpdate = true; zoneTex.minFilter = zoneTex.magFilter = THREE.LinearFilter; zoneTex.wrapS = zoneTex.wrapT = THREE.ClampToEdgeWrapping;
   const uniforms = {
+    tZone: { value: zoneTex },
     tMask: { value: maskTex }, tGrass: { value: tex.grass }, tSand: { value: tex.sand }, tNoise: { value: tex.noise }, tAO: { value: noAO },
     uSize: { value: size }, uStripeDir: { value: stripeDir }, uMowDir: { value: mowDir }, uSunXZ: { value: sunXZ }, uTime: { value: 0 },
   };
@@ -74,7 +81,7 @@ export function buildTerrain(course, tex, sunDir = new THREE.Vector3(0.5, 0.7, 0
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vWorldPos; varying vec3 vWNormal;
-uniform sampler2D tMask, tGrass, tSand, tNoise, tAO;
+uniform sampler2D tMask, tGrass, tSand, tNoise, tAO, tZone;
 uniform float uSize; uniform vec2 uStripeDir, uMowDir, uSunXZ;
 float terrainRim; float terrainSand; float terrainWater; float terrainFair; float terrainGreen; float terrainDist;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
@@ -85,6 +92,16 @@ float fairway = mask.r, green = mask.g, sand = mask.b, water = mask.a;
 float rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 vec4 nA = texture2D(tNoise, wuv / 61.0);
 vec4 nB = texture2D(tNoise, wuv / 9.7 + 0.3);
+// Mown edges are cut lines, not gradients: sharpen the soft mask about its half-way contour, with
+// a little wobble so the line wanders like a real mower's. The band just outside the fairway is
+// the first cut.
+float wob = (nB.g - 0.5) * 0.09 + (nB.a - 0.5) * 0.05;
+float fairRaw = fairway;
+fairway = smoothstep(0.4, 0.6, fairway + wob);
+green = smoothstep(0.42, 0.58, green + wob * 0.4);
+fairway *= 1.0 - green;
+float firstCut = smoothstep(0.1, 0.24, fairRaw + wob) * (1.0 - fairway) * (1.0 - green);
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 float camDist = length(vWorldPos - cameraPosition);
 float farMix = smoothstep(10.0, 80.0, camDist);
 // turf detail at three scales, drifting to a macro sample far away so the tiling never shows
@@ -98,7 +115,7 @@ vec3 g0 = texture2D(tGrass, wuv / 0.62 + 0.5).rgb;
 turf = mix(turf, mix(turf, g0, 0.6), 1.0 - smoothstep(1.5, 14.0, camDist));
 #endif
 // ROUGH: longer, darker, bluer, with straw-coloured worn patches
-vec3 roughCol = turf * vec3(0.70, 0.84, 0.52);
+vec3 roughCol = turf * vec3(0.62, 0.78, 0.46);
 roughCol = mix(roughCol, roughCol * vec3(1.22, 1.06, 0.62), nA.b * 0.6);
 roughCol *= 0.74 + 0.52 * nA.r;
 roughCol = mix(roughCol, roughCol * vec3(0.86, 0.96, 1.05), nB.g * 0.3);
@@ -107,28 +124,31 @@ roughCol = mix(roughCol, roughCol * vec3(0.86, 0.96, 1.05), nB.g * 0.3);
 vec2 toCam = normalize(cameraPosition.xz - wuv);
 float band = sign(sin(dot(wuv, uStripeDir) * 6.2831 / 6.5));
 float sheen = band * dot(toCam, uMowDir);
-float stripeF = 1.0 + 0.12 * sheen * (1.0 - farMix * 0.35) + 0.025 * band;
-vec3 fairCol = turf * vec3(0.90, 1.06, 0.56) * stripeF * (0.94 + 0.12 * nA.r);
+float stripeF = 1.0 + 0.16 * sheen * (1.0 - farMix * 0.3) + 0.03 * band;
+vec3 fairCol = turf * vec3(1.02, 1.20, 0.60) * stripeF * (0.94 + 0.12 * nA.r);
 fairCol = mix(fairCol, fairCol * vec3(1.06, 1.0, 0.82), nA.b * 0.3);
 // first cut between fairway and rough: half-way colour, a touch darker because it is longer
-float core = smoothstep(0.5, 0.97, fairway);
-vec3 collarCol = mix(roughCol, fairCol, 0.55) * 0.93;
-vec3 fairMixed = mix(collarCol, fairCol, core);
+vec3 collarCol = mix(roughCol, fairCol, 0.5) * 0.92;
+roughCol = mix(roughCol, collarCol, firstCut);
+vec3 fairMixed = fairCol;
 // GREEN: fine cross-cut checker with the same view-dependent sheen, and a fringe collar
 vec3 g3 = texture2D(tGrass, wuv / 0.7).rgb;
 float chkA = sign(sin(dot(wuv, uStripeDir) * 6.2831 / 2.2));
 float chkB = sign(sin(dot(wuv, uMowDir) * 6.2831 / 2.2));
 float chkSheen = chkA * dot(toCam, uMowDir) * 0.06 + chkB * dot(toCam, uStripeDir) * 0.06;
-vec3 greenCol = mix(g3, turf, 0.6) * vec3(0.92, 1.10, 0.62) * (1.0 + chkSheen + 0.02 * (chkA + chkB)) * (0.97 + 0.06 * nB.g);
-float gcore = smoothstep(0.55, 0.97, green);
-vec3 greenMixed = mix(fairCol * 0.96, greenCol, gcore);
+vec3 greenCol = mix(g3, turf, 0.6) * vec3(1.04, 1.26, 0.68) * (1.0 + chkSheen + 0.02 * (chkA + chkB)) * (0.97 + 0.06 * nB.g);
+vec3 greenMixed = greenCol;
 // SAND: raked bunker with a shaded lip on the side facing away from the sun. The mask edge is a
 // single texel wide, so the sand weight is smoothed over five taps before it is used for the
 // blend and the lip, otherwise the texel grid shows as steps along the edge.
-vec3 sandCol = texture2D(tSand, wuv / 2.6).rgb * (0.92 + 0.16 * nB.g) * (0.97 + 0.06 * nB.a);
+vec3 sandCol = texture2D(tSand, wuv / 2.6).rgb * (1.0 + 0.16 * nB.g) * (0.97 + 0.06 * nB.a);
+// rake furrows, close up only (they would shimmer at distance)
+sandCol *= 1.0 + 0.07 * sin(dot(wuv, vec2(0.35, 0.94)) * 52.0 + nB.r * 5.0) * (1.0 - smoothstep(6.0, 26.0, camDist));
 float rim = smoothstep(0.03, 0.4, sand) * (1.0 - smoothstep(0.4, 0.95, sand));
 #ifdef TERRAIN_LITE
 sandCol *= 1.0 - 0.28 * rim;
+sand = smoothstep(0.36, 0.6, sand + wob * 0.5);
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 #else
 float px = 1.1 / uSize;
 float sL = texture2D(tMask, muv - vec2(px, 0.0)).b, sR = texture2D(tMask, muv + vec2(px, 0.0)).b;
@@ -138,11 +158,30 @@ rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 vec2 sg = vec2(sR - sL, sU - sD); // points into the bunker
 rim = smoothstep(0.03, 0.4, sand) * (1.0 - smoothstep(0.4, 0.95, sand));
 float lipShade = rim * clamp(-dot(normalize(sg + 1e-5), uSunXZ), 0.0, 1.0);
-sandCol *= 1.0 - 0.5 * lipShade - 0.16 * rim;
+sandCol *= 1.0 - 0.55 * lipShade - 0.16 * rim;
+// the cut edge: sharpen, then lay a thin shadow line on the sand just inside the turf lip
+float sandSoft = sand;
+sand = smoothstep(0.36, 0.6, sand + wob * 0.5);
+sandCol *= 1.0 - 0.42 * sand * (1.0 - smoothstep(0.6, 0.86, sandSoft));
+rough = clamp(1.0 - fairway - green - sand - water, 0.0, 1.0);
 #endif
 // WATER BED: dark silt, darker toward the middle of the pond
 vec3 mud = vec3(0.20, 0.17, 0.11) * (0.8 + 0.4 * nB.r) * (1.0 - 0.5 * smoothstep(0.4, 1.0, water));
 float gsum = max(1e-4, rough + fairway + green);
+#ifndef TERRAIN_SPACE
+// NATIVE GRASS: beyond the mown rough the ground goes to tall, straw-gold fescue in drifts,
+// streaked along the wind and patched with olive where it is still green at the root.
+float fes = texture2D(tZone, muv).r;
+float turfL = clamp(dot(g2, vec3(0.3333)) / 0.075, 0.55, 1.7);
+float streak = texture2D(tNoise, vec2(dot(wuv, vec2(0.86, 0.5)) / 3.1, dot(wuv, vec2(-0.5, 0.86)) / 34.0)).g;
+vec3 fescueCol = mix(vec3(0.22, 0.185, 0.074), vec3(0.13, 0.155, 0.052), smoothstep(0.3, 0.75, nA.r)) * turfL * (0.72 + 0.56 * streak);
+fescueCol = mix(fescueCol, fescueCol * vec3(1.18, 1.1, 0.9), nB.a * 0.5);
+roughCol = mix(roughCol, fescueCol, fes);
+// WOODLAND FLOOR: under the crowns the grass gives way to leaf litter and bare, shaded earth
+float canopy = smoothstep(0.22, 0.7, texture2D(tAO, muv).r);
+vec3 litter = vec3(0.150, 0.105, 0.058) * (0.65 + 0.7 * nB.g) * (0.8 + 0.4 * nB.a);
+roughCol = mix(roughCol, litter, canopy * 0.72);
+#endif
 vec3 grass = (roughCol * rough + fairMixed * fairway + greenMixed * green) / gsum;
 grass *= 1.0 - 0.2 * rim; // grass overhanging the bunker lip
 #ifdef TERRAIN_SPACE
@@ -177,11 +216,11 @@ normal = normalize(mix(normal, nonPerturbedNormal, smoothstep(6.0, 45.0, terrain
   mat.defines = {};
   if (lite) mat.defines.TERRAIN_LITE = '';
   if (space) mat.defines.TERRAIN_SPACE = '';
-  mat.customProgramCacheKey = () => 'terrain-splat-v2' + (lite ? '-lite' : '') + (space ? '-space' : '');
+  mat.customProgramCacheKey = () => 'terrain-splat-v4' + (lite ? '-lite' : '') + (space ? '-space' : '');
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true; mesh.castShadow = false;
   mesh.name = 'terrain';
-  return { mesh, uniforms, maskTex };
+  return { mesh, uniforms, maskTex, zoneTex };
 }
 
 export function buildWater(course, tex, envMap) {
@@ -294,6 +333,10 @@ export function buildSky(renderer, scene) {
         float pt = smoothstep(size * (0.5 + br), 0.0, length(sp - star));
         return pt * gain * (0.35 + 2.4 * br) * mix(vec3(1.0, 0.95, 0.88), vec3(0.78, 0.86, 1.0), h.z);
       }
+      float vhash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(vhash(i), vhash(i + vec2(1.0, 0.0)), f.x), mix(vhash(i + vec2(0.0, 1.0)), vhash(i + vec2(1.0, 1.0)), f.x), f.y); }
+      float vfbm(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * vnoise(p); p = p * 2.03 + 7.1; a *= 0.5; } return s; }
       vec3 spaceSky(vec3 d) {
         vec3 col = vec3(0.003, 0.004, 0.010);
         vec3 bandN = normalize(vec3(0.35, 0.75, -0.55));
@@ -333,6 +376,16 @@ export function buildSky(renderer, scene) {
           // warm haze toward the sun, strongest low in the sky
           col = mix(col, uWarm, pow(sd, 3.0) * 0.4 * (1.0 - h * 0.7));
           col += uSunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 40.0) * 0.5 + pow(sd, 6.0) * 0.12);
+          // high cloud: thin streaked cirrus and a few soft banks, thinning to nothing toward the horizon haze
+          if (y > 0.02) {
+            vec2 cuv = d.xz / (y + 0.12);
+            float wisp = vfbm(vec2(cuv.x * 0.55 + vfbm(cuv * 0.7) * 0.9, cuv.y * 1.7));
+            float bank = vfbm(cuv * 0.42 + 3.7);
+            float cov = smoothstep(0.52, 0.82, wisp) * 0.55 + smoothstep(0.58, 0.8, bank) * 0.5;
+            cov *= smoothstep(0.02, 0.22, y);
+            vec3 ccol = mix(vec3(0.96, 0.97, 1.0), uWarm * 1.15, pow(sd, 4.0) * 0.6);
+            col = mix(col, ccol, clamp(cov, 0.0, 0.8));
+          }
           // below the horizon: a slightly darker haze so the sky never shows through gaps
           col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.08, y));
           gl_FragColor = vec4(col, 1.0);
