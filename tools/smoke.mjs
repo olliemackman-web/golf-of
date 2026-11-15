@@ -201,6 +201,25 @@ try {
   if (!Object.values(shop.ups).every((v) => v === 5)) errors.push(`coupon did not max upgrades: ${JSON.stringify(shop.ups)} (${shop.msg})`);
   if (!shop.restored) errors.push('player code did not round-trip');
   console.log(`shop: "${shop.msg}", upgrades ${Object.values(shop.ups).join('')}, player code ${shop.code}… restored ${shop.restored}`);
+  // Green reading: the dots are laid on the green with the putter in hand and put away with any other club.
+  const read = await page.evaluate(() => {
+    const g = window.__game, pin = g.L.pin; g.newHole(); g.ball.place(pin.x + 4, pin.z + 2); g.autoClub(); g.solvePlan(); g.enterAim(); g.step(0.2);
+    const putter = { club: g.club.id, shown: g.greenRead.points.visible, dots: g.greenRead.count };
+    g.changeClub(1); const other = { club: g.club.id, shown: g.greenRead.points.visible };
+    return { putter, other };
+  });
+  if (!(read.putter.club === 'PT' && read.putter.shown && read.putter.dots > 20 && !read.other.shown)) errors.push(`green-reading dots wrong: ${JSON.stringify(read)}`);
+  console.log(`green reading: ${read.putter.dots} dots with the putter, hidden with ${read.other.club}`);
+
+  // Conditions: choosing rain rebuilds the hole under a grey sky with the rain on; morning puts it back.
+  const weather = async (key) => {
+    await page.evaluate(async (k) => { const g = window.__game; g.paused = false; g.setConditions(k); await g.goToHole(0); g.paused = true; }, key);
+    return page.evaluate(() => { const g = window.__game; g.step(0.2); return { applied: g.appliedConditions, rain: g.rain.visible, sunI: g.sun.intensity, state: g.state, path: g.L._path ? g.L._path.length : 0 }; });
+  };
+  const wet = await weather('rain'), dry = await weather('morning');
+  if (!(wet.applied === 'rain' && wet.rain && wet.sunI < 1 && dry.applied === 'morning' && !dry.rain && dry.sunI > 2)) errors.push(`conditions did not switch: ${JSON.stringify({ wet, dry })}`);
+  console.log(`conditions: rain -> sun ${wet.sunI}, rain on ${wet.rain}; morning -> sun ${dry.sunI}, rain on ${dry.rain}; cart path ${dry.path} points`);
+
   if (process.env.SMOKE_SHOT) { await page.screenshot({ path: process.env.SMOKE_SHOT, timeout: 180000 }); console.log('screenshot ' + process.env.SMOKE_SHOT); }
   ok = errors.length === 0;
 } catch (e) {

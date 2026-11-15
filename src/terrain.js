@@ -302,6 +302,18 @@ export function buildFarHills(course) {
 export const HORIZON = new THREE.Color(0.64, 0.72, 0.82);
 
 /**
+ * Time of day and weather. Each preset sets the sun's place, the sky's three colours, how much of
+ * the sky is cloud, the key and fill lights, the haze and the exposure. Looks only: the ball flies
+ * and rolls the same in all of them.
+ */
+export const CONDITIONS = {
+  morning: { name: 'Morning', blurb: 'Clear, long shadows', elev: 29, az: 210, zenith: [0.09, 0.22, 0.58], mid: [0.30, 0.50, 0.86], horizon: [0.64, 0.72, 0.82], warm: [0.98, 0.86, 0.66], sunCol: [1.0, 0.95, 0.85], cover: 0, sun: 0xffe7c4, sunI: 3.1, sky: 0x8fb2e6, ground: 0x46552c, hemiI: 0.62, fog: 0.0008, exposure: 1.12, clouds: 0.68 },
+  golden: { name: 'Golden hour', blurb: 'Low sun, warm light', elev: 15, az: 236, zenith: [0.10, 0.17, 0.44], mid: [0.44, 0.44, 0.60], horizon: [0.93, 0.66, 0.44], warm: [1.0, 0.60, 0.28], sunCol: [1.0, 0.74, 0.44], cover: 0, sun: 0xffb46e, sunI: 5.2, sky: 0x97a2d0, ground: 0x5a4a2a, hemiI: 0.85, fog: 0.00115, exposure: 1.2, clouds: 0.75 },
+  overcast: { name: 'Overcast', blurb: 'Flat grey light', elev: 52, az: 210, zenith: [0.40, 0.44, 0.50], mid: [0.55, 0.59, 0.64], horizon: [0.68, 0.71, 0.74], warm: [0.70, 0.72, 0.74], sunCol: [1.0, 1.0, 1.0], cover: 1, sun: 0xe2e8ee, sunI: 0.95, sky: 0xc6ced8, ground: 0x4a5238, hemiI: 1.3, fog: 0.0015, exposure: 1.06, clouds: 0 },
+  rain: { name: 'Rain', blurb: 'Dark sky, steady rain', elev: 52, az: 210, zenith: [0.25, 0.28, 0.33], mid: [0.38, 0.42, 0.47], horizon: [0.50, 0.54, 0.58], warm: [0.5, 0.54, 0.58], sunCol: [1.0, 1.0, 1.0], cover: 1, sun: 0xcfd8e2, sunI: 0.55, sky: 0xaab6c4, ground: 0x3f4832, hemiI: 1.25, fog: 0.0026, exposure: 1.02, clouds: 0, rain: true },
+};
+
+/**
  * Sky dome: a three-stop gradient (deep blue zenith, mid blue, pale haze at the horizon) with a
  * warm glow around the sun and a soft sun disc. Drawn at the far plane and tone-mapped with the
  * rest of the scene. Also baked into the environment map for reflections and ambient colour.
@@ -315,6 +327,7 @@ export function buildSky(renderer, scene) {
     uniforms: {
       uSun: { value: sunDir.clone() },
       uSpace: { value: 0 },
+      uCover: { value: 0 },
       uZenith: { value: new THREE.Color(0.09, 0.22, 0.58) },
       uMid: { value: new THREE.Color(0.30, 0.50, 0.86) },
       uHorizon: { value: HORIZON.clone() },
@@ -323,7 +336,7 @@ export function buildSky(renderer, scene) {
     },
     vertexShader: `varying vec3 vDir;
       void main() { vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }`,
-    fragmentShader: `uniform vec3 uSun, uZenith, uMid, uHorizon, uWarm, uSunCol; uniform float uSpace; varying vec3 vDir;
+    fragmentShader: `uniform vec3 uSun, uZenith, uMid, uHorizon, uWarm, uSunCol; uniform float uSpace, uCover; varying vec3 vDir;
       vec3 hash3(vec3 p) { p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return fract(sin(p) * 43758.5453); }
       // one layer of jittered point stars on a cubic grid over the direction sphere
       vec3 stars(vec3 d, float cells, float size, float gain) {
@@ -375,7 +388,7 @@ export function buildSky(renderer, scene) {
           float sd = max(0.0, dot(d, uSun));
           // warm haze toward the sun, strongest low in the sky
           col = mix(col, uWarm, pow(sd, 3.0) * 0.4 * (1.0 - h * 0.7));
-          col += uSunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 40.0) * 0.5 + pow(sd, 6.0) * 0.12);
+          col += uSunCol * (pow(sd, 900.0) * 6.0 + pow(sd, 40.0) * 0.5 + pow(sd, 6.0) * 0.12) * (1.0 - uCover);
           // high cloud: thin streaked cirrus and a few soft banks, thinning to nothing toward the horizon haze
           if (y > 0.02) {
             vec2 cuv = d.xz / (y + 0.12);
@@ -384,7 +397,10 @@ export function buildSky(renderer, scene) {
             float cov = smoothstep(0.52, 0.82, wisp) * 0.55 + smoothstep(0.58, 0.8, bank) * 0.5;
             cov *= smoothstep(0.02, 0.22, y);
             vec3 ccol = mix(vec3(0.96, 0.97, 1.0), uWarm * 1.15, pow(sd, 4.0) * 0.6);
-            col = mix(col, ccol, clamp(cov, 0.0, 0.8));
+            col = mix(col, ccol, clamp(cov, 0.0, 0.8) * (1.0 - uCover));
+            // a full deck of cloud: rolling greys, a little brighter where the sun is behind it
+            vec3 deck = mix(uZenith * 0.9, uHorizon * 1.08, vfbm(cuv * 0.5 + 1.3)) * (0.9 + 0.25 * vfbm(cuv * 1.7)) + uSunCol * pow(sd, 5.0) * 0.07;
+            col = mix(col, deck, uCover * smoothstep(0.0, 0.2, y));
           }
           // below the horizon: a slightly darker haze so the sky never shows through gaps
           col = mix(col, uHorizon * 0.9, smoothstep(0.0, -0.08, y));
@@ -409,7 +425,15 @@ export function buildSky(renderer, scene) {
     envMap = bake(); scene.environment = envMap;
     return envMap;
   };
-  return { sky, sunDir, envMap, setSpace };
+  /** Apply a CONDITIONS preset to the dome (and the shared sun direction and horizon colour); re-bakes the environment. */
+  const setConditions = (c) => {
+    sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - c.elev), THREE.MathUtils.degToRad(c.az));
+    const u = mat.uniforms; u.uSun.value.copy(sunDir); u.uCover.value = c.cover;
+    u.uZenith.value.setRGB(...c.zenith); u.uMid.value.setRGB(...c.mid); u.uHorizon.value.setRGB(...c.horizon); u.uWarm.value.setRGB(...c.warm); u.uSunCol.value.setRGB(...c.sunCol);
+    HORIZON.setRGB(...c.horizon);
+    return setSpace(false);
+  };
+  return { sky, sunDir, envMap, setSpace, setConditions };
 }
 
 export function buildClouds(tex) {
@@ -472,21 +496,6 @@ transformed.y += sin(fx * 6.0 - uTime * 5.0) * 0.012 * fx;`);
   g.add(flag);
   g.userData.flag = flag; g.userData.uniforms = fu;
   g.userData.update = (t, windDir) => { fu.uTime.value = t; flag.rotation.y = windDir + Math.sin(t * 0.7) * 0.15; };
-  return g;
-}
-
-export function buildTeeMarkers(course) {
-  const g = new THREE.Group();
-  const t = course.layout.tee;
-  const mat = new THREE.MeshStandardMaterial({ color: 0x1e4fd8, roughness: 0.5 });
-  for (const dx of [-2.2, 2.2]) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), mat);
-    m.position.set(t.x + dx, course.heightAt(t.x + dx, t.z - 1) + 0.05, t.z - 1);
-    m.castShadow = true; g.add(m);
-  }
-  // yardage plate
-  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.35), new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.7 }));
-  plate.position.set(t.x - 3.6, course.heightAt(t.x - 3.6, t.z - 2) + 0.03, t.z - 2); plate.rotation.y = 0.3; g.add(plate);
   return g;
 }
 

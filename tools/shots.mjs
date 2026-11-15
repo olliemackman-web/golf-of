@@ -61,6 +61,17 @@ await shot('11-rough', () => { const g = window.__game; g.newHole(); const sp = 
 await shot('12-bunker', () => { const g = window.__game; g.newHole(); g.enterAim(); const b = g.L.bunkers[0]; if (!b) return; const v = g.camera.position.clone(), y = g.course.heightAt(b.x, b.z); g.debugCam = { pos: v.clone().set(b.x + b.rx + 5, y + 2.6, b.z + b.rz + 4), look: v.clone().set(b.x, y, b.z) }; });
 await page.evaluate(() => { window.__game.debugCam = null; });
 await shot('13-holed', () => { const g = window.__game, pin = g.L.pin; g.newHole(); g.ball.place(pin.x + 2.5, pin.z + 1.5); g.autoClub(); g.solvePlan(); g.enterAim(); const p = g.aimPose(); g.camera.position.copy(p.pos); g.lookDir.subVectors(p.look, p.pos).normalize(); g.setLook(); g.shotClub = g.club; g.strokes = g.L.par - 1; g.ball.pos.x = pin.x; g.ball.pos.z = pin.z; g.ball.mode = 'holed'; g.onShotEnd(); for (let i = 0; i < 55; i++) g.update(1 / 60); });
+// the clubhouse behind the first tee, then the same tee shot in each of the other conditions
+await shot('14-clubhouse', () => { const g = window.__game; g.newHole(); g.enterAim(); const k = (g.L.clear || [])[0]; if (!k) return; const t = g.L.tee, v = g.camera.position.clone(), y = g.course.heightAt(t.x, t.z); g.debugCam = { pos: v.clone().set(t.x + (t.x - k.x) * 0.25, y + 2.2, t.z + (t.z - k.z) * 0.25), look: v.clone().set(k.x, y + 2.5, k.z) }; });
+await page.evaluate(() => { window.__game.debugCam = null; });
+for (const [name, key] of [['15-golden', 'golden'], ['16-overcast', 'overcast'], ['17-rain', 'rain']]) {
+  if (only.length && !only.some((o) => name.includes(o))) continue;
+  await page.evaluate(async (key) => { const g = window.__game; g.paused = false; g.setConditions(key); await g.goToHole(0); }, key);
+  await page.waitForFunction(() => window.__game.state !== 'loading', null, { timeout: 600000 });
+  await page.evaluate(() => { const g = window.__game; g.paused = true; g.overlay.classList.add('hidden'); document.getElementById('overlay').style.display = 'none'; });
+  await shot(name, () => { const g = window.__game; g.enterAim(); const p = g.aimPose(); g.camera.position.copy(p.pos); g.lookDir.subVectors(p.look, p.pos).normalize(); g.setLook(); for (let i = 0; i < 40; i++) g.update(1 / 60); });
+}
+await page.evaluate(() => { try { localStorage.removeItem('riverbend-conditions'); } catch (e) { /* ignore */ } });
 if (process.env.HOLE) {
   const n = parseInt(process.env.HOLE, 10) - 1;
   await page.evaluate(async (n) => { await window.__game.goToHole(n); }, n);

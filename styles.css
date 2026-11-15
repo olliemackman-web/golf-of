@@ -411,6 +411,21 @@ b { font-weight: 700; }
 .pnew input::placeholder { color: var(--faint); }
 .pnew input:focus { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(201, 255, 91, .16); }
 
+/* time of day / weather picker */
+.conds { display: flex; gap: 6px; margin: 0 0 12px; }
+.cond {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--glass-2); color: var(--mute); font-size: 11px; font-weight: 700; letter-spacing: .06em; white-space: nowrap;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.cond:hover { color: var(--ivory); border-color: var(--line-2); }
+.cond.on { color: var(--ivory); border-color: var(--lime); background: rgba(201, 255, 91, .1); }
+.cdot { width: 14px; height: 14px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .3); }
+.cdot.morning { background: linear-gradient(to bottom, #4f8fe6, #cfe4f6); }
+.cdot.golden { background: linear-gradient(to bottom, #6a72b8, #ffb060); }
+.cdot.overcast { background: linear-gradient(to bottom, #8f98a4, #c8cdd2); }
+.cdot.rain { background: linear-gradient(to bottom, #4a525e, #8a94a0); }
+
 /* course cards */
 .pcard.course { align-items: stretch; padding: 0; overflow: hidden; }
 .cart { flex: none; width: 92px; position: relative; display: flex; align-items: flex-end; justify-content: center; overflow: hidden; }
@@ -575,6 +590,8 @@ b { font-weight: 700; }
   .target { justify-self: stretch; width: auto; min-height: 0; padding: 8px 14px 7px; }
   .panel { padding: 24px 18px 20px; border-radius: 18px; }
   .callout { font-size: 32px; top: 27%; }
+  .cond { font-size: 10px; letter-spacing: 0; gap: 5px; padding: 0 4px; }
+  .cdot { width: 11px; height: 11px; }
   .flight span { padding: 6px 12px; }
   .flight b { font-size: 15px; }
   .banner { top: 20%; }
