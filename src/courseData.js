@@ -509,6 +509,40 @@ export function surfaceWeights(L, x, z) {
 }
 
 /**
+ * The cart path: a strip that runs down one side of a generated hole, beyond the rough, from by
+ * the tee to short of the green. Looks only (the ball plays it as rough). Returns the centre line
+ * as [x, z] points, cached on the layout; empty for Starfall and for hand-laid holes, whose
+ * scenery is placed from the real ground.
+ */
+export function cartPath(L) {
+  if (L._path) return L._path;
+  const pts = [];
+  if (!L.space && !L.scenery && L.par > 3) {
+    // keep to the side away from the pond
+    let side = 1;
+    if (L.pond) { const { t } = splineDist(L, L.pond.x, L.pond.z); const f = alongHole(L, t, 0); side = (L.pond.x - f.x) * Math.cos(f.dir) - (L.pond.z - f.z) * Math.sin(f.dir) > 0 ? -1 : 1; }
+    const off = (L.halfWidth || 16) + 14.5, step = 4 / (L.len || 400);
+    for (let t = 0.02; t <= 0.9; t += step) {
+      const p = alongHole(L, t, side * (off + Math.sin(t * 9 + L.seed) * 1.6));
+      if (L.bunkers.some((b) => ellipseDist(p.x, p.z, b) < 1.5) || ponds(L).some((q) => ellipseDist(p.x, p.z, q) < 1.3)) { if (pts.length > 4) break; pts.length = 0; continue; }
+      pts.push([p.x, p.z]);
+    }
+    if (pts.length < 6) pts.length = 0;
+  }
+  return (L._path = pts);
+}
+/** Distance from (x, z) to the cart path's centre line (Infinity when the hole has none). */
+export function pathDist(L, x, z) {
+  const p = cartPath(L); let best = Infinity;
+  for (let i = 0; i < p.length - 1; i++) {
+    const ax = p[i][0], az = p[i][1], dx = p[i + 1][0] - ax, dz = p[i + 1][1] - az;
+    const u = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    best = Math.min(best, Math.hypot(x - ax - dx * u, z - az - dz * u));
+  }
+  return best;
+}
+
+/**
  * How much of the ground at (x, z) is unmown native grass (0..1): the tall golden fescue that grows
  * beyond the rough. Looks only — the ball still plays it as rough. Patchy, and kept clear of the
  * tee, the green and the bunkers.
@@ -523,6 +557,8 @@ export function fescueWeight(L, x, z) {
   w *= smoothstep(16, 30, Math.hypot(x - L.tee.x, z - L.tee.z));
   for (const b of L.bunkers) w *= smoothstep(1.6, 3.2, ellipseDist(x, z, b));
   for (const q of ponds(L)) w *= smoothstep(1.15, 1.6, ellipseDist(x, z, q));
+  w *= smoothstep(1.3, 2.6, pathDist(L, x, z));
+  for (const k of L.clear || []) w *= smoothstep(k.r * 0.8, k.r, Math.hypot(x - k.x, z - k.z));
   // drifts of fescue between patches of ordinary rough
   const n = fbm(x / 46 + 11 + L.seed * 0.01, z / 46 - 5, 3) * 0.5 + 0.5;
   return w * smoothstep(0.3, 0.5, n);

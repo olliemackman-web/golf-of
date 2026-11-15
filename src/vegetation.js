@@ -2,18 +2,23 @@
 // the tree collision field the ball physics calls into.
 import * as THREE from 'three';
 import { mulberry32, fbm, smoothstep } from './noise.js';
-import { splineDist, ellipseDist, SURF, alongHole, ponds, fescueWeight } from './courseData.js';
+import { splineDist, ellipseDist, SURF, alongHole, ponds, fescueWeight, pathDist } from './courseData.js';
 import { BALL_R } from './physics.js';
 
 const windUniform = { value: 0 };
 export function setWindTime(t) { windUniform.value = t; }
 
-/** Vertex-shader wind for instanced foliage; weight by `uv.y` for blades. */
-function addWind(mat, { byUv = false, amp = 0.12, freq = 1.0 } = {}) {
+/**
+ * Vertex-shader wind for instanced foliage; weight by `uv.y` for blades. With `crown`, each card
+ * also takes its normal from the per-instance `aOut` attribute (the direction out of the tree's
+ * crown) instead of its own face, so a canopy shades as one rounded mass: bright toward the sun,
+ * dark on the far side.
+ */
+function addWind(mat, { byUv = false, amp = 0.12, freq = 1.0, crown = false } = {}) {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = windUniform;
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;')
+      .replace('#include <common>', '#include <common>\nuniform float uTime;' + (crown ? '\nattribute vec3 aOut;' : ''))
       .replace('#include <project_vertex>', `
 vec4 mvPosition = vec4( transformed, 1.0 );
 #ifdef USE_INSTANCING
@@ -27,7 +32,15 @@ float weight = ${byUv ? 'uv.y' : '1.0'};
 wp.xyz += vec3(sway, sway * 0.15, sway * 0.5) * ${amp.toFixed(3)} * weight;
 mvPosition = viewMatrix * wp;
 gl_Position = projectionMatrix * mvPosition;`);
+    if (crown) {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = aOut;')
+        .replace('#include <defaultnormal_vertex>', 'vec3 transformedNormal = normalize(normalMatrix * aOut);');
+      // no flipping for the back face: the crown normal is the same seen from either side of a card
+      shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', 'float faceDirection = 1.0; vec3 normal = normalize(vNormal); vec3 nonPerturbedNormal = normal;');
+    }
   };
+  mat.customProgramCacheKey = () => `wind-${byUv}-${amp}-${freq}-${crown}`;
 }
 
 /**
@@ -157,6 +170,8 @@ export function buildVegetation(course, tex, quality = {}) {
   const sc = L.scenery || null;
   const okSpot = (x, z, minSpline) => {
     if (!course.inBounds(x, z)) return false;
+    if (pathDist(L, x, z) < 3.2) return false;                                   // the cart path stays clear
+    for (const k of L.clear || []) if (Math.hypot(x - k.x, z - k.z) < k.r) return false; // and so do the buildings
     const { d, t } = splineDist(L, x, z);
     if (d < minSpline) return false;
     const s = course.surfaceAt(x, z);
@@ -173,11 +188,17 @@ export function buildVegetation(course, tex, quality = {}) {
   const addTree = (x, z, forceKind, o = {}) => {
     const n = fbm(x / 70 + 4, z / 70 - 6, 2);
     const conifer = forceKind != null ? forceKind : (n > 0.3 ? rnd() < 0.5 : rnd() < 0.08); // parkland: mostly broadleaf, with stands of pine
+    // a few species within each kind: oak and birch among the broadleaves, spruce and Scots pine among the conifers
+    if (forceKind == null) {
+      const r = rnd();
+      if (!conifer && r < 0.24) { const h = 11 + rnd() * 6; o = { h, canopyR: h * 0.2 + rnd() * 0.5, canopyRy: h * 0.36, canopyY: h * 0.6, trunkH: h * 0.34, trunkR: 0.11 + h * 0.012, density: 0.25, tint: 1.08 + rnd() * 0.12, warm: 0.7 + rnd() * 0.3, species: 'birch' }; }
+      else if (conifer && r < 0.42) { const h = 12 + rnd() * 8; o = { h, canopyR: h * 0.24 + rnd() * 0.6, canopyRy: h * 0.22, canopyY: h * 0.78, trunkH: h * 0.56, density: 0.4, tint: 0.92, species: 'pine', crownFrom: 0.56 }; }
+    }
     const h = o.h || (conifer ? 11 + rnd() * 8 : 8.5 + rnd() * 8);
     const trunkR = o.trunkR || 0.18 + h * 0.022 + rnd() * 0.08;
     const canopyR = o.canopyR || (conifer ? h * 0.2 + rnd() * 0.8 : h * 0.36 + rnd() * 1.2);
     const y = course.heightAt(x, z) - 0.15;
-    const spec = { x, z, y, h, trunkR, conifer, canopyR, canopyRy: o.canopyRy || (conifer ? h * 0.42 : canopyR * 0.85), canopyY: o.canopyY != null ? o.canopyY : (conifer ? h * 0.55 : h - canopyR * 0.75), trunkH: o.trunkH || (conifer ? h * 0.3 : h - canopyR), density: o.density || (conifer ? 0.5 : 0.3), tint: o.tint || 0.85 + rnd() * 0.3, rot: rnd() * Math.PI * 2, noCards: !!o.noCards, cards: o.cards };
+    const spec = { x, z, y, h, trunkR, conifer, canopyR, canopyRy: o.canopyRy || (conifer ? h * 0.42 : canopyR * 0.85), canopyY: o.canopyY != null ? o.canopyY : (conifer ? h * 0.55 : h - canopyR * 0.75), trunkH: o.trunkH || (conifer ? h * 0.3 : h - canopyR), density: o.density || (conifer ? 0.5 : 0.3), tint: o.tint || 0.85 + rnd() * 0.3, rot: rnd() * Math.PI * 2, noCards: !!o.noCards, cards: o.cards, species: o.species || (conifer ? 'spruce' : 'oak'), crownFrom: o.crownFrom || 0.3, warm: o.warm };
     specs.push(spec); if (!o.noCollide) field.add(spec);
     return spec;
   };
@@ -252,19 +273,49 @@ export function buildVegetation(course, tex, quality = {}) {
   // ---- Canopy occlusion: soft dark discs under every crown, sampled by the terrain shader ----
   const ao = paintCanopyOcclusion(specs, L.size);
 
-  // ---- Trunks ----
-  const trunkGeo = new THREE.CylinderGeometry(0.55, 1, 1, 10, 1);
-  trunkGeo.translate(0, 0.5, 0);
+  // ---- Crown lobes: a broadleaf crown is several overlapping masses, not one ball ----
+  for (const t of specs) {
+    if (t.conifer || t.noCards) continue;
+    const slender = t.canopyRy > t.canopyR * 1.3, n = t.canopyR < 1.5 ? 1 : slender ? 3 : 3 + Math.floor(rnd() * 3);
+    t.lobes = [];
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + rnd() * 1.2, out = n === 1 ? 0 : slender ? 0.12 : 0.34 + rnd() * 0.2;
+      const ly = n === 1 ? 0 : slender ? (k / (n - 1) - 0.5) * 1.1 * t.canopyRy : (rnd() - 0.4) * 0.7 * t.canopyRy;
+      t.lobes.push({ x: Math.cos(a) * out * t.canopyR, y: ly, z: Math.sin(a) * out * t.canopyR, r: t.canopyR * (n === 1 ? 1 : slender ? 0.85 : 0.52 + rnd() * 0.16) });
+    }
+  }
+
+  // ---- Trunks (flared at the root) and the limbs that carry each lobe ----
+  const trunkGeo = new THREE.LatheGeometry([[1.5, 0], [1.12, 0.035], [0.98, 0.1], [0.86, 0.4], [0.55, 1]].map(([r, y]) => new THREE.Vector2(r, y)), 10);
   const trunkMat = new THREE.MeshStandardMaterial({ map: tex.bark, roughness: 0.96, color: 0xcfc8be });
+  const BARK = { birch: [2.3, 2.3, 2.2], pine: [1.25, 0.92, 0.74], spruce: [0.95, 0.9, 0.86], oak: [1, 1, 1] };
   const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, specs.length);
   trunks.castShadow = true; trunks.receiveShadow = true;
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pv = new THREE.Vector3();
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pv = new THREE.Vector3(), barkC = new THREE.Color();
+  const yUp = new THREE.Vector3(0, 1, 0), limbDir = new THREE.Vector3();
+  const limbs = [];
   specs.forEach((t, i) => {
     const th = t.conifer ? t.h * 0.95 : t.trunkH + t.canopyR * 0.6;
-    m.compose(pv.set(t.x, t.y, t.z), q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot), s.set(t.trunkR, th, t.trunkR));
+    m.compose(pv.set(t.x, t.y, t.z), q.setFromAxisAngle(yUp, t.rot), s.set(t.trunkR, th, t.trunkR));
     trunks.setMatrixAt(i, m);
+    const bk = BARK[t.species] || BARK.oak; trunks.setColorAt(i, barkC.setRGB(bk[0], bk[1], bk[2]));
+    if (t.lobes && t.lobes.length > 1 && t.trunkR > 0.12) t.lobes.forEach((lb, k) => {
+      const y0 = t.trunkH * (0.72 + 0.1 * k);
+      limbDir.set(lb.x * 0.85, t.canopyY + lb.y - y0, lb.z * 0.85);
+      limbs.push({ x: t.x, y: t.y + y0, z: t.z, dx: limbDir.x, dy: limbDir.y, dz: limbDir.z, r: t.trunkR * 0.42, bk });
+    });
   });
   group.add(trunks);
+  if (limbs.length) {
+    const limbMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, limbs.length);
+    limbMesh.castShadow = true;
+    limbs.forEach((lb, i) => {
+      limbDir.set(lb.dx, lb.dy, lb.dz); const len = limbDir.length(); limbDir.normalize();
+      m.compose(pv.set(lb.x, lb.y, lb.z), q.setFromUnitVectors(yUp, limbDir), s.set(lb.r, len, lb.r));
+      limbMesh.setMatrixAt(i, m); limbMesh.setColorAt(i, barkC.setRGB(lb.bk[0], lb.bk[1], lb.bk[2]));
+    });
+    group.add(limbMesh);
+  }
 
   // ---- Crown cores: a dark, solid mass inside each canopy so the leaf cards read as the lit skin
   // of a full tree and the sky does not show through the middle ----
@@ -275,21 +326,25 @@ export function buildVegetation(course, tex, quality = {}) {
     const mesh = new THREE.InstancedMesh(geo, coreMat, list.length);
     mesh.castShadow = true; mesh.receiveShadow = true;
     const cc = new THREE.Color();
-    list.forEach((t, i) => { place(t); mesh.setMatrixAt(i, m); const k = 0.75 + 0.25 * t.tint; mesh.setColorAt(i, cc.setRGB(0.019 * k, 0.046 * k, 0.015 * k)); });
+    list.forEach((t, i) => { place(t); mesh.setMatrixAt(i, m); const k = 0.75 + 0.25 * t.tint; mesh.setColorAt(i, cc.setRGB(0.024 * k, 0.056 * k, 0.019 * k)); });
     group.add(mesh);
   };
   const yAxis = new THREE.Vector3(0, 1, 0);
-  mkCores(crowned.filter((t) => !t.conifer), new THREE.IcosahedronGeometry(1, 2), (t) => m.compose(pv.set(t.x, t.y + t.canopyY, t.z), q.setFromAxisAngle(yAxis, t.rot), s.set(t.canopyR * 0.55, t.canopyRy * 0.5, t.canopyR * 0.55)));
+  // one core inside each lobe of a broadleaf crown, well under the leaf skin
+  const lobeCores = [];
+  for (const t of crowned) if (!t.conifer) { const squash = Math.min(1.5, t.canopyRy / t.canopyR); for (const lb of t.lobes) lobeCores.push({ x: t.x + lb.x, y: t.y + t.canopyY + lb.y, z: t.z + lb.z, r: lb.r * 0.5, ry: lb.r * 0.5 * 0.85 * squash, tint: t.tint, rot: t.rot }); }
+  mkCores(lobeCores, new THREE.IcosahedronGeometry(1, 2), (c) => m.compose(pv.set(c.x, c.y, c.z), q.setFromAxisAngle(yAxis, c.rot), s.set(c.r, c.ry, c.r)));
   const coneGeo = new THREE.ConeGeometry(1, 1, 9, 1); coneGeo.translate(0, 0.5, 0);
-  mkCores(crowned.filter((t) => t.conifer), coneGeo, (t) => m.compose(pv.set(t.x, t.y + t.h * 0.3, t.z), q.setFromAxisAngle(yAxis, t.rot), s.set(t.canopyR * 0.5, t.h * 0.6, t.canopyR * 0.5)));
+  mkCores(crowned.filter((t) => t.conifer), coneGeo, (t) => m.compose(pv.set(t.x, t.y + t.h * (t.crownFrom + 0.04), t.z), q.setFromAxisAngle(yAxis, t.rot), s.set(t.canopyR * (t.species === 'pine' ? 0.34 : 0.5), t.h * (1 - t.crownFrom) * 0.86, t.canopyR * (t.species === 'pine' ? 0.34 : 0.5))));
 
   // ---- Canopies: leaf cards ----
-  const cardGeo = new THREE.PlaneGeometry(1, 1);
   const nCards = (t, conifer) => t.cards || (conifer ? CARDS_C : CARDS_B);
   const makeCards = (texture, list, conifer) => {
     let count = 0; for (const t of list) count += nCards(t, conifer);
     const mat = new THREE.MeshStandardMaterial({ map: texture, alphaTest: quality.aa ? 0.3 : 0.45, alphaToCoverage: !!quality.aa, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
-    addWind(mat, { amp: 0.14, freq: 0.9 });
+    addWind(mat, { amp: 0.14, freq: 0.9, crown: true });
+    const cardGeo = new THREE.PlaneGeometry(1, 1), outs = new Float32Array(count * 3);
+    cardGeo.setAttribute('aOut', new THREE.InstancedBufferAttribute(outs, 3));
     const mesh = new THREE.InstancedMesh(cardGeo, mat, count);
     mesh.castShadow = true; mesh.receiveShadow = true;
     mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: texture, alphaTest: 0.45 });
@@ -305,17 +360,19 @@ export function buildVegetation(course, tex, quality = {}) {
         let px, py, pz, size, hf;
         if (conifer) {
           const u = k / n; // 0 bottom .. 1 top
-          const yy = t.h * 0.3 + u * t.h * 0.7;
-          const rr = t.canopyR * (1 - u * 0.92) * (0.6 + rnd() * 0.55);
+          const yy = t.h * t.crownFrom + u * t.h * (1 - t.crownFrom);
+          const rr = t.canopyR * (t.species === 'pine' ? 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, u * 1.15)) : 1 - u * 0.92) * (0.6 + rnd() * 0.55);
           const a = rnd() * Math.PI * 2;
           px = Math.cos(a) * rr; pz = Math.sin(a) * rr; py = yy; hf = u;
           size = 1.4 + t.canopyR * 0.7 * (1 - u * 0.5) + rnd() * 0.8;
         } else {
           // bias toward the shell of the crown so the silhouette is full and the interior is not wasted
-          const a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1), rr = t.canopyR * Math.pow(rnd(), 0.42) * 0.95;
-          px = Math.sin(b) * Math.cos(a) * rr; pz = Math.sin(b) * Math.sin(a) * rr; py = t.canopyY + Math.cos(b) * rr * 0.8;
-          hf = 0.5 + Math.cos(b) * rr * 0.8 / (2 * t.canopyRy);
-          size = t.canopyR * (0.5 + rnd() * 0.42);
+          // on the skin of one of the crown's lobes
+          const lb = t.lobes[k % t.lobes.length], squash = Math.min(1.5, t.canopyRy / t.canopyR);
+          const a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1), rr = lb.r * (0.5 + 0.5 * Math.pow(rnd(), 0.6));
+          px = lb.x + Math.sin(b) * Math.cos(a) * rr; pz = lb.z + Math.sin(b) * Math.sin(a) * rr; py = t.canopyY + lb.y + Math.cos(b) * rr * 0.85 * squash;
+          hf = 0.5 + (py - t.canopyY) / (2 * t.canopyRy);
+          size = Math.max(1.1, lb.r * (1.05 + rnd() * 0.7));
         }
         if (conifer) {
           q.setFromEuler(new THREE.Euler(-0.9 + rnd() * 0.5, Math.atan2(px, pz) + (rnd() - 0.5), (rnd() - 0.5) * 0.4));
@@ -328,8 +385,11 @@ export function buildVegetation(course, tex, quality = {}) {
         }
         m.compose(pv.set(t.x + px, t.y + py, t.z + pz), q, s.set(size, size, 1));
         mesh.setMatrixAt(i, m);
+        // crown normal: out from the middle of the tree, lifted a little so the tops catch the sky
+        const oy = conifer ? 0.45 * Math.hypot(px, pz) + 0.2 : (py - t.canopyY) + 0.3 * t.canopyR, ol = Math.hypot(px, oy, pz) || 1;
+        outs[i * 3] = px / ol; outs[i * 3 + 1] = oy / ol; outs[i * 3 + 2] = pz / ol;
         // darker low in the crown, brighter on top, with per-card scatter
-        const shade = (0.62 + 0.48 * Math.min(1, Math.max(0, hf))) * (0.86 + rnd() * 0.28);
+        const shade = (0.74 + 0.34 * Math.min(1, Math.max(0, hf))) * (0.86 + rnd() * 0.28);
         color.copy(tintC).multiplyScalar(shade);
         mesh.setColorAt(i, color);
         i++;

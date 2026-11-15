@@ -21,6 +21,28 @@ function placeCyl(mesh, a, b) {
   mesh.scale.set(1, len, 1);
 }
 
+/**
+ * A hand closed round the grip, built in the club's own frame (the shaft runs along Y, the head is
+ * toward -Y, +X is the top of the grip as the golfer looks down it). `side` is -1 for the lead hand,
+ * whose back faces the target, +1 for the trail hand.
+ */
+function buildHand(mat, side) {
+  const h = new THREE.Group();
+  const add = (geo, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); m.castShadow = true; h.add(m); return m; };
+  const ball = new THREE.SphereGeometry(1, 14, 10);
+  add(ball, 0.003, 0, side * 0.021, 0.021, 0.047, 0.015);                 // back of the hand
+  const finger = new THREE.CapsuleGeometry(0.0085, 0.03, 4, 8); finger.rotateX(Math.PI / 2);
+  for (let i = 0; i < 4; i++) {
+    const y = -0.031 + i * 0.0205;
+    add(finger, -0.0165, y, side * 0.002);                                 // fingers wrapped under the grip
+    add(ball, -0.003, y, side * 0.031, 0.0098, 0.0098, 0.0098);            // knuckles
+  }
+  const thumb = new THREE.CapsuleGeometry(0.0088, 0.034, 4, 8);
+  const t = add(thumb, 0.0185, -0.026, side * -0.003); t.rotation.z = 0.12; // thumb down the top of the shaft
+  add(ball, 0.012, 0.03, side * 0.012, 0.016, 0.02, 0.016);                // heel pad
+  return h;
+}
+
 export function stanceFor(club) {
   if (club.putter) return { pivotY: 1.2, ballZ: -0.05, Rh: 0.56, eye: [0.24, 1.38, 0.0], phiTop: 0.5, phiFinish: 0.42, tBack: 0.9, tThrough: 0.55, wristMax: 0, rollMax: 0 };
   if (club.wood) return { pivotY: 1.36, ballZ: club.id === 'DR' ? -0.22 : -0.15, Rh: 0.62, eye: [0.31, 1.52, 0.02], phiTop: 170 * DEG, phiFinish: 175 * DEG, tBack: 1.0, tThrough: 0.75, wristMax: 92 * DEG, rollMax: 75 * DEG };
@@ -98,11 +120,16 @@ export class Golfer {
     // arms
     this.upperL = cylBetween(0.052, 0.045, shirt); this.upperR = cylBetween(0.052, 0.045, shirt);
     // long sleeves: bare forearms read as featureless tubes from the golfer's own eyes
-    this.foreL = cylBetween(0.047, 0.035, shirt); this.foreR = cylBetween(0.047, 0.035, shirt);
+    this.foreL = cylBetween(0.047, 0.037, shirt); this.foreR = cylBetween(0.047, 0.037, shirt);
     this.elbowL = new THREE.Mesh(new THREE.SphereGeometry(0.046, 12, 8), shirt); this.elbowR = this.elbowL.clone();
-    this.handL = new THREE.Mesh(new THREE.SphereGeometry(0.048, 14, 10), glove); this.handL.scale.set(0.8, 1.1, 0.75);
-    this.handR = new THREE.Mesh(new THREE.SphereGeometry(0.048, 14, 10), skin); this.handR.scale.set(0.8, 1.1, 0.75);
-    for (const m of [this.upperL, this.upperR, this.foreL, this.foreR, this.elbowL, this.elbowR, this.handL, this.handR]) { m.castShadow = true; this.group.add(m); }
+    this.handL = buildHand(glove, -1); this.handR = buildHand(skin, 1);
+    // each sleeve ends in a cuff, then a bare wrist; the lead wrist wears a watch
+    const cuffMat = new THREE.MeshStandardMaterial({ color: 0x1b3657, roughness: 0.8 });
+    this.wristL = cylBetween(0.031, 0.027, skin); this.wristR = cylBetween(0.031, 0.027, skin);
+    this.cuffL = cylBetween(0.04, 0.039, cuffMat); this.cuffR = cylBetween(0.04, 0.039, cuffMat);
+    this.watch = cylBetween(0.034, 0.034, new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.45, metalness: 0.4 }));
+    this.strap = cylBetween(0.0325, 0.0325, new THREE.MeshStandardMaterial({ color: 0xe9e9e6, roughness: 0.7 }));
+    for (const m of [this.upperL, this.upperR, this.foreL, this.foreR, this.elbowL, this.elbowR, this.handL, this.handR, this.wristL, this.wristR, this.cuffL, this.cuffR, this.watch, this.strap]) { m.castShadow = true; this.group.add(m); }
     this.clubHolder = new THREE.Group(); this.group.add(this.clubHolder);
     this.club = null; this.stance = null;
     this.phase = 'idle'; this.phi = 0; this.phiTarget = 0; this.phiHeld = 0; this.t = 0; this.tDown = 0.6;
@@ -230,8 +257,12 @@ export class Golfer {
       return mid.add(out).add(new THREE.Vector3(0, -0.03, 0));
     };
     const eL = elbow(this.shoulderL, gL, 1), eR = elbow(this.shoulderR, gR, -1);
-    placeCyl(this.upperL, this.shoulderL, eL); placeCyl(this.foreL, eL, gL);
-    placeCyl(this.upperR, this.shoulderR, eR); placeCyl(this.foreR, eR, gR);
+    placeCyl(this.upperL, this.shoulderL, eL); placeCyl(this.upperR, this.shoulderR, eR);
+    // forearm: sleeve to the cuff, then wrist
+    const along = (a, b, u) => new THREE.Vector3().lerpVectors(a, b, u);
+    placeCyl(this.foreL, eL, along(eL, gL, 0.74)); placeCyl(this.cuffL, along(eL, gL, 0.7), along(eL, gL, 0.76)); placeCyl(this.wristL, along(eL, gL, 0.74), along(eL, gL, 0.97));
+    placeCyl(this.foreR, eR, along(eR, gR, 0.74)); placeCyl(this.cuffR, along(eR, gR, 0.7), along(eR, gR, 0.76)); placeCyl(this.wristR, along(eR, gR, 0.74), along(eR, gR, 0.97));
+    placeCyl(this.watch, along(eL, gL, 0.8), along(eL, gL, 0.85)); placeCyl(this.strap, along(eL, gL, 0.9), along(eL, gL, 0.95)); // watch, and the glove's wrist strap
     this.elbowL.position.copy(eL); this.elbowR.position.copy(eR);
     // torso rotates with the swing
     this.torso.rotation.y = turn * 0.55;

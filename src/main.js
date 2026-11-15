@@ -9,13 +9,15 @@ import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { Course, holeFor, COURSES, HOLE_COUNT, SURF, SURF_NAME, splineDist, splinePoint, splineLength, courseYards } from './courseData.js';
 import { Ball, BALL_R, CLUBS, shotParams, simulateShot } from './physics.js';
-import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, buildTeeMarkers, HORIZON } from './terrain.js';
+import { buildTextures, buildTerrain, buildWater, buildFarHills, buildSky, buildClouds, buildHole, HORIZON, CONDITIONS } from './terrain.js';
+import { buildFurniture } from './furniture.js';
 import { buildVegetation, setWindTime, TreeField, GrassPatch } from './vegetation.js';
 import { buildAsteroids } from './space.js';
 import { Golfer } from './golfer.js';
 import { Hud, yards } from './hud.js';
 import { GameAudio } from './audio.js';
 import { Effects } from './effects.js';
+import { GreenRead } from './greenread.js';
 import { ProfileStore, coinsFor, UPGRADES } from './profile.js';
 import { Menus, shortSpin } from './menus.js';
 import { mulberry32, clamp, smoothstep, lerp } from './noise.js';
@@ -84,6 +86,8 @@ class Game {
     this.skyCtl = buildSky(r, scene);
     this.sunDir = this.skyCtl.sunDir; this.envMap = this.skyCtl.envMap; this.spaceMode = false;
     this.clouds = buildClouds(this.tex); scene.add(this.clouds);
+    this.conditions = 'morning'; try { const k = localStorage.getItem('riverbend-conditions'); if (CONDITIONS[k]) this.conditions = k; } catch (e) { /* private mode */ }
+    this.envMap = this.skyCtl.setConditions(CONDITIONS[this.conditions]); this.appliedConditions = this.conditions; // before the first hole is built: its haze and sun come from this
     this.holeGroup = null; this.scores = []; this.holeIndex = 0; this.courseIndex = 0;
     await this.buildHoleScene(0, (t) => { document.getElementById('loading').textContent = t; });
 
@@ -95,7 +99,27 @@ class Game {
     sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.5; sun.shadow.radius = 2;
     scene.add(sun); scene.add(sun.target);
     this.hemi = new THREE.HemisphereLight(0x8fb2e6, 0x46552c, 0.62); scene.add(this.hemi);
-    if (this.spaceMode) this.applyAtmosphere(true); // the first hole may already be a Starfall hole
+    // rain: slanted streaks in a box that travels with the camera
+    {
+      const N = 2200, W = 26, H = 16, p = new Float32Array(N * 6), e = new Float32Array(N * 2);
+      for (let i = 0; i < N; i++) { const x = Math.random() * W, y = Math.random() * H, z = Math.random() * W; p.set([x, y, z, x, y, z], i * 6); e[i * 2] = 0; e[i * 2 + 1] = 1; }
+      const rg = new THREE.BufferGeometry(); rg.setAttribute('position', new THREE.BufferAttribute(p, 3)); rg.setAttribute('aEnd', new THREE.BufferAttribute(e, 1));
+      this.rainMat = new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uCam: { value: new THREE.Vector3() }, uWind: { value: new THREE.Vector2() } },
+        vertexShader: `attribute float aEnd; uniform float uTime; uniform vec3 uCam; uniform vec2 uWind; varying float vA;
+          void main() { vec3 p = position; float sp = 13.0 + fract(p.x * 7.31 + p.z * 3.17) * 5.0;
+            p.y = mod(p.y - uTime * sp, ${H.toFixed(1)});
+            p.xz += uWind * (${H.toFixed(1)} - p.y) * -0.07;
+            p.xz = uCam.xz + mod(p.xz - uCam.xz, ${W.toFixed(1)}) - ${(W / 2).toFixed(1)};
+            p.y += uCam.y - ${(H * 0.4).toFixed(1)};
+            p += vec3(uWind.x * 0.07, 1.0, uWind.y * 0.07) * aEnd * 0.55;
+            vA = 0.1 + 0.25 * aEnd; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0); }`,
+        fragmentShader: 'varying float vA; void main() { gl_FragColor = vec4(vec3(0.82, 0.86, 0.92), vA); }',
+        transparent: true, depthWrite: false,
+      });
+      this.rain = new THREE.LineSegments(rg, this.rainMat); this.rain.frustumCulled = false; this.rain.visible = false; this.rain.renderOrder = 7; scene.add(this.rain);
+    }
+
 
     // ball
     const bmat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0, clearcoat: 0.8, clearcoatRoughness: 0.2, bumpMap: this.tex.ballBump, bumpScale: 0.0008 });
@@ -142,6 +166,7 @@ class Game {
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.0075, 0.0034, 0.007, 10), pegMat); cup.position.y = -0.0035; this.peg.add(cup);
     this.peg.visible = false; scene.add(this.peg);
     this.fx = new Effects(scene); this.fx.ground = (x, z) => this.groundY(x, z);
+    this.greenRead = new GreenRead(); scene.add(this.greenRead.points);
     this.grass = new GrassPatch(this.isMobile ? 6000 : 16000, 3.6, this.tex.grass.image); scene.add(this.grass.mesh);
 
     // post
@@ -169,6 +194,7 @@ class Game {
 
     this.hud = new Hud(this.course);
     this.audio = new GameAudio();
+    this.applyAtmosphere(this.spaceMode);
     this.aimView = 'behind'; this.planPower = 1; this.spinSel = { x: 0, y: 0 };
     this.store = new ProfileStore(); this.menus = new Menus(this); this.profile = null;
     this.hud.bindControls({
@@ -198,7 +224,7 @@ class Game {
     const scene = this.scene;
     if (this.holeGroup) {
       const shared = new Set(Object.values(this.tex));
-      this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { const m = o.material; if (m.map && !shared.has(m.map)) m.map.dispose(); if (m.dispose) m.dispose(); if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
+      this.holeGroup.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.geometry) o.geometry.dispose(); if (o.material) { for (const m of Array.isArray(o.material) ? o.material : [o.material]) { if (m.map && !shared.has(m.map)) m.map.dispose(); m.dispose(); } if (o.customDepthMaterial) o.customDepthMaterial.dispose(); } });
       scene.remove(this.holeGroup);
       if (this.terrain) { this.terrain.maskTex.dispose(); this.terrain.zoneTex.dispose(); if (this.terrain.uniforms.tAO.value) this.terrain.uniforms.tAO.value.dispose(); }
     }
@@ -206,15 +232,16 @@ class Game {
     this.holeIndex = n;
     this.course = new Course(holeFor(this.courseIndex, n));
     const space = !!this.L.space;
-    if (space !== this.spaceMode) { this.spaceMode = space; if (this.sun) this.applyAtmosphere(space); }
+    if (this.sun && (space !== this.spaceMode || (space ? 'space' : this.conditions) !== this.appliedConditions)) { this.spaceMode = space; this.applyAtmosphere(space); }
+    this.spaceMode = space;
     const g = this.holeGroup = new THREE.Group(); scene.add(g);
     progress(space ? 'RAISING THE ISLANDS…' : 'LAYING THE TURF…'); await this.frame();
+    this.furniture = buildFurniture(this.course, { space, birds: !(CONDITIONS[this.conditions] || {}).rain }); g.add(this.furniture); // first: it marks ground the fescue and trees must leave clear
     const terr = buildTerrain(this.course, this.tex, this.sunDir, { lite: this.isMobile, space }); this.terrain = terr; g.add(terr.mesh);
     this.water = buildWater(this.course, this.tex, this.envMap); if (this.water) g.add(this.water);
     this.asteroids = null;
     if (space) { this.asteroids = buildAsteroids(this.course, n); g.add(this.asteroids); } else g.add(buildFarHills(this.course));
     this.holeObj = buildHole(this.course, this.tex); g.add(this.holeObj);
-    g.add(buildTeeMarkers(this.course));
     if (space) { this.trees = new TreeField(); }
     else {
       progress('PLANTING TREES…'); await this.frame();
@@ -223,6 +250,7 @@ class Game {
     }
     if (this.ball) { this.ball.course = this.course; this.ball.trees = this.trees; this.ball.hole = this.course.layout.pin; }
     if (this.hud) this.hud.setHole(this.course);
+    if (this.greenRead) this.greenRead.hide();
     if (this.grass) this.grass.mesh.visible = false; // laid out again when the first shot is lined up
   }
 
@@ -233,12 +261,21 @@ class Game {
 
   /** Day on the parkland courses, deep space on Starfall: sky, fog, fill light and clouds. */
   applyAtmosphere(space) {
-    this.envMap = this.skyCtl.setSpace(space);
+    const c = CONDITIONS[this.conditions] || CONDITIONS.morning;
+    this.envMap = space ? this.skyCtl.setSpace(true) : this.skyCtl.setConditions(c);
     this.scene.fog.color.set(space ? 0x000000 : HORIZON);
-    this.scene.fog.density = space ? 0.0011 : 0.0008;
-    this.hemi.color.set(space ? 0x2c3d6b : 0x8fb2e6); this.hemi.groundColor.set(space ? 0x06070b : 0x46552c); this.hemi.intensity = space ? 0.6 : 0.62;
-    this.sun.color.set(space ? 0xfff6ea : 0xffe7c4); this.sun.intensity = space ? 3.4 : 3.1;
-    if (this.clouds) this.clouds.visible = !space;
+    this.scene.fog.density = space ? 0.0011 : c.fog;
+    this.hemi.color.set(space ? 0x2c3d6b : c.sky); this.hemi.groundColor.set(space ? 0x06070b : c.ground); this.hemi.intensity = space ? 0.6 : c.hemiI;
+    this.sun.color.set(space ? 0xfff6ea : c.sun); this.sun.intensity = space ? 3.4 : c.sunI;
+    this.renderer.toneMappingExposure = space ? 1.12 : c.exposure;
+    if (this.clouds) { this.clouds.visible = !space && c.clouds > 0; this.clouds.children[0].material.opacity = c.clouds; }
+    this.rain.visible = !space && !!c.rain; this.audio.setRain(!space && !!c.rain);
+    this.appliedConditions = space ? 'space' : this.conditions;
+  }
+  /** Choose the time of day / weather for the round (a CONDITIONS key); remembered between visits. */
+  setConditions(key) {
+    if (!CONDITIONS[key]) return;
+    this.conditions = key; try { localStorage.setItem('riverbend-conditions', key); } catch (e) { /* private mode */ }
   }
 
   /** Everything the profile's upgrades and the chosen spin change about a shot. */
@@ -278,7 +315,7 @@ class Game {
     this.hud.setCamTag('');
     this.lastPos = { x: this.ball.pos.x, z: this.ball.pos.z };
     const wa = this.rnd() * Math.PI * 2, ws = 0.8 + this.rnd() * 4.5;
-    this.windBase = { x: Math.cos(wa) * ws, z: Math.sin(wa) * ws, speed: ws, angle: wa };
+    this.windBase = { x: Math.cos(wa) * ws, z: Math.sin(wa) * ws, speed: ws, angle: wa }; this.audio.setWind(ws);
     this.aimYaw = this.defaultAimYaw();
     this.autoClub(); this.solvePlan();
     this.camMode = 'pov';
@@ -302,7 +339,7 @@ class Game {
       this.menus.coursePicker(this.panel, COURSES.map((c, i) => ({ ...c, yards: courseYards(i) })), this.profile, (idx) => {
         this.hud.message(`Welcome, ${this.profile.name}`, 2500, 'good');
         this.audio.ensure();
-        if (idx === this.courseIndex && this.holeIndex === 0 && this.scores.length === 0) this.startPlay();
+        if (idx === this.courseIndex && this.holeIndex === 0 && this.scores.length === 0 && this.appliedConditions === (this.spaceMode ? 'space' : this.conditions)) this.startPlay();
         else { this.courseIndex = idx; this.scores = []; this.goToHole(0); }
       }, this.store); // the store lets the picker rank every saved player per course
     });
@@ -377,8 +414,9 @@ class Game {
     this.hud.setSwingLabel(this.club.putter ? 'PUTT' : 'ADDRESS'); this.hud.setAimControls(true);
   }
 
-  /** Keyboard hints for the aim view in use. */
+  /** Keyboard hints for the aim view in use; the green-reading dots come and go with the putter. */
   setAimHint() {
+    if (this.club.putter && this.state === 'aim') this.greenRead.build(this.course, this.ball.pos, this.L.pin); else this.greenRead.hide();
     if (this.club.putter) this.hud.setHint('<b>DRAG</b> back for pace, sideways for line <b>W / S</b> fine pace <b>SPACE</b> putt');
     else this.hud.setHint(this.aimView === 'landing' ? '<b>DRAG</b> aim <b>WHEEL</b> zoom <b>V</b> view <b>Q / E</b> club <b>W / S</b> power <b>SPACE</b> address' : '<b>DRAG</b> aim <b>V</b> view <b>Q / E</b> club <b>W / S</b> power <b>B</b> spin <b>SPACE</b> address');
   }
@@ -489,7 +527,7 @@ class Game {
   changeClub(delta) {
     if (this.state !== 'aim') return;
     this.clubIndex = (this.clubIndex + delta + CLUBS.length) % CLUBS.length;
-    this.solvePlan();
+    this.solvePlan(); this.setAimHint();
     this.previewDirty = true; this.audio.click();
   }
   updateLieHud() {
@@ -743,6 +781,7 @@ class Game {
     this.hud.callout(band === 'gold' ? 'Perfect!' : band === 'green' ? 'Good' : this.club.putter ? (right ? 'Pushed' : 'Pulled') : band === 'amber' ? (right ? 'Pushed' : 'Pulled') : (right ? 'Slice!' : 'Hook!'), band);
     s.phase = 'down'; s.t = 0;
     this.golfer.beginDownswing(this.club.putter ? T_DOWN_PUTT : T_DOWN, () => this.impact());
+    if (!this.club.putter) this.audio.whoosh(s.power, T_DOWN);
     this.hud.setSwingLabel('');
   }
 
@@ -769,7 +808,7 @@ class Game {
     if (s.launched) return;
     s.launched = true; s.impactT = s.t;
     const acc = this.accuracyValue();
-    const lie = this.lieId();
+    const lie = this.lieId(), wasTeedSound = this.teed;
     const params = shotParams(this.club, s.power, acc, lie, this.mods());
     this.ball.captureBonus = this.mods().captureBonus;
     // a little natural dispersion on imperfect strikes only: a gold strike flies exactly the previewed line
@@ -792,6 +831,7 @@ class Game {
       if (lie === SURF.SAND) this.fx.sand(fxp, dir, s.power);
       else if (!wasTeed || !this.club.wood) this.fx.turf(fxp, dir, s.power * (wasTeed ? 0.5 : 1));
     }
+    this.greenRead.hide();
     this.lockShot = null;
     if (this.holeLock) {
       // code 1111: replace the physics with a guided path from here to the cup
@@ -799,10 +839,11 @@ class Game {
       this.lockShot = { t: 0, x0: b.x, y0: b.y, z0: b.z, putt, dur: putt ? clamp(dist / 2.5, 0.8, 3.5) : clamp(dist / 36, 1.4, 6.5), apex: putt ? 0 : clamp(dist * 0.2, 1.5, 45) };
       this.holeLock = false; this.hud.setLock(false);
     }
-    this.audio.hit(s.power, this.club);
+    this.audio.hit(s.power, this.club, lie === SURF.SAND ? 'sand' : lie === SURF.ROUGH ? 'rough' : wasTeedSound ? 'tee' : 'turf');
     this.state = 'flight'; this.flightT = 0; this.landingCam = null; this.trackFov = 62;
     // every full shot is followed on the ball cam; C flips back to the eyes mid-flight. Putts stay at eye level.
-    if (!this.club.putter) { this.camMode = 'chase'; this.chaseDir = null; }
+    // …after a beat at the golfer's eyes, so the follow-through is seen before the cut to the ball
+    this.chaseAt = null; if (!this.club.putter) { this.camMode = 'pov'; this.chaseAt = 0.4; }
     this.previewLine.visible = this.previewEdge.visible = false; this.landRing.visible = false; this.puttRibbon.visible = false;
     this.hud.setSwingLabel('');
     this.hud.setHint(this.camMode === 'pov' ? '<b>C</b> ball camera' : '<b>C</b> first-person');
@@ -815,6 +856,7 @@ class Game {
     setWindTime(this.time);
     this.clouds.userData.update(dt);
     if (this.asteroids) this.asteroids.userData.update(dt);
+    if (this.furniture) this.furniture.userData.update && this.furniture.userData.update(this.time);
     const w = this.wind(this.time); // gusting: drives the flag's flutter, not the ball
     // the flag streams downwind: its cloth runs along local +x, and rotation.y = r maps +x to (cos r, -sin r)
     this.holeObj.userData.update(this.time, Math.atan2(w.x, w.z) - Math.PI / 2);
@@ -823,6 +865,8 @@ class Game {
     this.ribbonMat.uniforms.uTime.value = this.time;
     this.fx.update(dt, this.camera, this.renderer.domElement.height);
     if (this.pegFly) this.updatePegFly(dt);
+    this.greenRead.update(this.time, this.camera, this.renderer.domElement.height);
+    if (this.rain.visible) { const u = this.rainMat.uniforms; u.uTime.value = this.time; u.uCam.value.copy(this.camera.position); u.uWind.value.set(this.windBase.x, this.windBase.z); }
     const aimDir = this.aimDir();
     // dial: wind relative to the aim line, + = blowing toward the player's right
     { const wb = this.windBase; const along = wb.x * aimDir.x + wb.z * aimDir.z, lateral = -wb.x * aimDir.z + wb.z * aimDir.x; this.hud.setWind(wb.speed, Math.atan2(lateral, along)); }
@@ -925,12 +969,13 @@ class Game {
 
   updateFlight(dt) {
     this.flightT += dt;
+    if (this.chaseAt != null && this.flightT >= this.chaseAt) { this.chaseAt = null; this.camMode = 'chase'; this.chaseDir = null; }
     if (this.lockShot) this.stepLockShot(dt);
     else this.ball.step(Math.min(dt, 0.05)); // steady wind set at launch: the flight matches the preview
     for (const ev of this.ball.events) {
-      if (ev.type === 'bounce') { if (!this.firstLand && !this.shotClub.putter) { this.firstLand = true; this.fx.landMark({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }); } this.audio.bounce(ev.speed); this.fx.puff({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }, ev.surface === SURF.SAND ? 'sand' : 'turf', ev.surface === SURF.GREEN ? ev.speed * 0.35 : ev.speed); }
-      else if (ev.type === 'tree') { this.audio.tree(); this.fx.leaves(this.ball.pos); this.hud.message('Off the trees!', 1600, 'bad'); }
-      else if (ev.type === 'lipout') { this.hud.message('Lip out!', 1500, 'bad'); }
+      if (ev.type === 'bounce') { if (!this.firstLand && !this.shotClub.putter) { this.firstLand = true; this.fx.landMark({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }); } this.audio.bounce(ev.speed, ev.surface === SURF.SAND ? 'sand' : ev.surface === SURF.GREEN ? 'green' : ev.surface === SURF.ROUGH ? 'rough' : 'turf'); this.fx.puff({ x: this.ball.pos.x, y: this.ball.pos.y - BALL_R, z: this.ball.pos.z }, ev.surface === SURF.SAND ? 'sand' : 'turf', ev.surface === SURF.GREEN ? ev.speed * 0.35 : ev.speed); }
+      else if (ev.type === 'tree') { this.audio.tree(ev.kind); this.fx.leaves(this.ball.pos); this.hud.message('Off the trees!', 1600, 'bad'); }
+      else if (ev.type === 'lipout') { this.audio.groan(); this.hud.message('Lip out!', 1500, 'bad'); }
     }
     this.ball.events.length = 0;
     this.syncBallMesh();

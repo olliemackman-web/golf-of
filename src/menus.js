@@ -1,6 +1,7 @@
 // Modal menus: profile picker, upgrade shop, spin pad. Plain DOM.
 import { UPGRADES, upgradeCost } from './profile.js';
 import { COURSES } from './courseData.js';
+import { CONDITIONS } from './terrain.js';
 import { coinHtml } from './hud.js';
 
 const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
@@ -79,8 +80,9 @@ export class Menus {
       const yours = b && board[0] && board[0].name !== profile.name ? ` · <b class="coin">your best ${b.strokes} (${fmtPar(b.toPar)})</b>` : '';
       return `<div class="pcard course"><div class="cart">${COURSE_ART[c.id] || ''}</div><div class="pmain"><div class="pname">${esc(c.name)}</div><div class="pmeta">18 holes · par ${c.par} · ${c.yards.toLocaleString()} yds${yours}</div><div class="pmeta">${esc(c.blurb)}</div>${record}<div class="lb">${rows}</div></div><button class="btn small" data-course="${i}">PLAY</button></div>`;
     }).join('');
-    container.innerHTML = `${brand(`${esc(profile.name.toUpperCase())} · PICK A COURSE`)}<div class="plist">${cards}</div><div class="pempty" style="padding-top:0">Records count every player saved in this browser.</div><button class="link" id="pback">← CHANGE PLAYER</button>`;
+    container.innerHTML = `${brand(`${esc(profile.name.toUpperCase())} · PICK A COURSE`)}<div class="conds" id="conds">${Object.entries(CONDITIONS).map(([k, c]) => `<button class="cond${k === this.game.conditions ? ' on' : ''}" data-cond="${k}" title="${esc(c.blurb)}"><i class="cdot ${k}"></i>${esc(c.name)}</button>`).join('')}</div><div class="plist">${cards}</div><div class="pempty" style="padding-top:0">Records count every player saved in this browser. Weather changes the look, not how the ball plays.</div><button class="link" id="pback">← CHANGE PLAYER</button>`;
     container.querySelector('#pback').onclick = () => this.game.showTitle();
+    for (const b of container.querySelectorAll('[data-cond]')) b.onclick = () => { this.game.setConditions(b.dataset.cond); for (const o of container.querySelectorAll('[data-cond]')) o.classList.toggle('on', o === b); };
     for (const b of container.querySelectorAll('[data-course]')) b.onclick = () => onPick(parseInt(b.dataset.course, 10));
   }
 

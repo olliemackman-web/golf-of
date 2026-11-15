@@ -49,6 +49,10 @@ club, `npm run fuzz` fires 220 random shots on every hole (`COURSE=1` for Gosfie
 
 Pick or create a player on the start screen. Profiles live in the browser's localStorage, which is per browser *and per site address*: open the game from a different link (a new preview URL, the LAN IP instead of localhost, a home-screen app instead of a tab) and it starts empty. The copy button on a player card copies a player code; paste it into the name box anywhere to bring that player across. The pro shop has a coupon box. Each hole pays coins by result — ace 50, eagle 25, birdie 10, par 5, bogey 3, double 2, worse 1 — spent in the PRO SHOP (aim view or the hole-out card) on five upgrade tracks: driver & woods, irons & wedges, forgiveness, putting, spin control (five levels each, 10/20/35/55/80 coins). Upgrades and best round carry across games. The SPIN button (B) opens a pad for draw/fade and back/top spin; spin never changes the carry, only the shape and what the ball does when it lands (full backspin sits, full topspin runs on). It is shown live on the aim line and resets after each shot. Upgrades are +10% clubhead speed per level.
 
+## Conditions
+
+The course picker has a row of conditions: Morning, Golden hour, Overcast and Rain (`CONDITIONS` in `src/terrain.js`). Each sets the sun, sky, cloud cover, lights, haze and exposure; Rain adds falling rain and its sound. They change the look only: the ball flies and rolls the same in all of them. The choice is remembered in the browser.
+
 ## Controls
 
 | Action | Desktop | Touch |
@@ -71,6 +75,8 @@ Pick or create a player on the start screen. Profiles live in the browser's loca
 - `src/physics.js` — ball flight (drag + Magnus), bounce, roll, hole capture, club table. `tools/calibrate.mjs` prints carry per club.
 - `src/terrain.js` — terrain splat shader (rough / first cut / view-dependent mown stripes / green / bunkers with shaded lips / water, plus a baked canopy-shadow map from the trees), water, far hills, gradient sky dome + environment map, clouds, cup + flag.
 - `src/vegetation.js` — instanced trees (trunks, a dark crown core and leaf cards), `GrassPatch` (individual blades around the ball), golden fescue in the native-grass zones (`fescueWeight` in `courseData.js`), reeds, tree collisions.
+- `src/furniture.js` — tee markers, hole sign, bench, yardage posts, rakes, the cart path ribbon (`cartPath` in `courseData.js`), the clubhouse behind tees 1, 10 and 18, and birds.
+- `src/greenread.js` — the green-reading dots: a grid on the putting surface that drifts downhill, faster and redder on steeper slopes.
 - `src/effects.js` — the strike flash, the landing ring and the confetti when a putt drops, and what the ball kicks up: turf from an iron, sand from a bunker, a splash and ripples from water, leaves from a tree, a puff where it lands.
 - `src/golfer.js` — POV rig (arms, hands, legs, club models) and the procedural swing.
 - `src/profile.js` — profiles, coins and upgrades in localStorage; `src/menus.js` — profile picker, shop, spin pad.
