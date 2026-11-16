@@ -1,7 +1,7 @@
 // Headless checks that need no browser: `npm test` runs this.
 // Each check throws on failure so the exit code is non-zero.
-import { Course, holeFor, COURSES, HOLE_COUNT, SURF, splinePoint, splineLength, courseYards } from '../src/courseData.js';
-import { CLUBS, shotParams, simulateShot, BALL_R } from '../src/physics.js';
+import { Course, holeFor, COURSES, HOLE_COUNT, SURF, splinePoint, splineLength, courseYards, alongHole } from '../src/courseData.js';
+import { Ball, CLUBS, shotParams, simulateShot, BALL_R } from '../src/physics.js';
 import { buildVegetation } from '../src/vegetation.js';
 import { mulberry32 } from '../src/noise.js';
 
@@ -90,9 +90,14 @@ check('random shots settle without NaNs, timeouts or sinking under ground', () =
   assert(total > 200, `only ${total} shots simulated`);
 });
 
-check('every Starfall hole is doable: a route with margin reaches the green in par + 1', () => {
-  const ci = COURSES.findIndex((c) => c.id === 'starfall');
-  assert(ci >= 0, 'no Starfall course');
+/**
+ * Plays every hole of a course with the simulator and demands a route that reaches the green in
+ * par + 1, where each shot still finishes safe when hit a little heavy, light, pulled or pushed.
+ * `waypoints(L)` lists the places besides the pin worth aiming at (islands, the fairway ahead).
+ */
+function doable(courseId, waypoints) {
+  const ci = COURSES.findIndex((c) => c.id === courseId);
+  assert(ci >= 0, `no ${courseId} course`);
   const flat = { x: 0, z: 0 };
   const safe = (course, r) => {
     if (r.mode !== 'rest') return false;
@@ -113,7 +118,7 @@ check('every Starfall hole is doable: a route with margin reaches the green in p
     while (legs < L.par + 1 && !home(pos)) {
       const dPin = Math.hypot(L.pin.x - pos.x, L.pin.z - pos.z);
       // aim at the pin and at every island centre ahead, a little either side of each
-      const targets = [L.pin, ...L.space.islands.filter((I) => Math.hypot(I.x - pos.x, I.z - pos.z) > 25)];
+      const targets = [L.pin, ...waypoints(L).filter((I) => Math.hypot(I.x - pos.x, I.z - pos.z) > 25 && Math.hypot(L.pin.x - I.x, L.pin.z - I.z) < dPin - 15)];
       const yaws = [];
       for (const T of targets) { const a = Math.atan2(T.x - pos.x, T.z - pos.z); yaws.push(a - 0.03, a, a + 0.03); }
       const cands = [];
@@ -146,6 +151,44 @@ check('every Starfall hole is doable: a route with margin reaches the green in p
     assert(home(pos), `${L.name}: not home after ${legs} legs (${route.join(', ')})`);
   }
   void flat;
+}
+
+check('every Starfall hole is doable: a route with margin reaches the green in par + 1', () => doable('starfall', (L) => L.space.islands));
+
+check('every Highland Lakes hole is doable: a route with margin reaches the green in par + 1', () => doable('highland', (L) => {
+  const pts = []; for (let t = 0.25; t < 0.95; t += 0.07) { const p = alongHole(L, t, 0); pts.push({ x: p.x, z: p.z }); }
+  return [...pts, ...(L.islands || [])];
+}));
+
+check('Highland Lakes: the ground sends the ball downhill', () => {
+  const ci = COURSES.findIndex((c) => c.id === 'highland');
+  // Long Meadow leans right (high on the left): a ball rolled straight down the middle drifts right
+  { const L = holeFor(ci, 3), course = new Course(L); const a = alongHole(L, 0.4, 0);
+    const b = new Ball(course); b.place(a.x, a.z); b.vel.x = Math.sin(a.dir) * 9; b.vel.z = Math.cos(a.dir) * 9; b.mode = 'roll';
+    for (let i = 0; i < 4000 && b.mode === 'roll'; i++) b.step(1 / 240);
+    const left = (b.pos.x - a.x) * Math.cos(a.dir) - (b.pos.z - a.z) * Math.sin(a.dir), run = (b.pos.x - a.x) * Math.sin(a.dir) + (b.pos.z - a.z) * Math.cos(a.dir);
+    console.log(`  Long Meadow: rolled ${run.toFixed(1)} m and drifted ${(-left).toFixed(2)} m right`);
+    assert(b.mode === 'rest', `ball never stopped (${b.mode})`); assert(left < -0.25, `expected a drift to the right, got ${(-left).toFixed(2)} m`); }
+  // every green: a ball set rolling gently across the slope finishes below where a flat green would leave it
+  let worst = Infinity, steep = 0;
+  for (let n = 0; n < HOLE_COUNT; n++) {
+    const L = holeFor(ci, n), course = new Course(L), g = L.green, nrm = course.normalAt(g.x, g.z);
+    const hl = Math.hypot(nrm.x, nrm.z); assert(hl > 1e-4, `${L.name}: the green is dead flat`);
+    const dx = nrm.x / hl, dz = nrm.z / hl; // downhill
+    const b = new Ball(course); b.place(g.x, g.z); b.vel.x = -dz * 1.6; b.vel.z = dx * 1.6; b.mode = 'roll'; // across the slope
+    for (let i = 0; i < 6000 && b.mode === 'roll'; i++) b.step(1 / 240);
+    const down = (b.pos.x - g.x) * dx + (b.pos.z - g.z) * dz;
+    assert(b.mode === 'rest' || b.mode === 'holed', `${L.name}: a putt across the green never stopped (${b.mode})`);
+    worst = Math.min(worst, down); steep = Math.max(steep, hl / nrm.y);
+    assert(down > 0.05, `${L.name}: a putt across the slope did not break downhill (${down.toFixed(2)} m)`);
+  }
+  console.log(`  greens: every cross-slope putt broke downhill, the least by ${worst.toFixed(2)} m; steepest centre slope ${(steep * 100).toFixed(1)}%`);
+  // the two island greens really are islands: water in most directions just beyond the apron
+  for (const n of [2, 16]) {
+    const L = holeFor(ci, n), course = new Course(L), g = L.green; let wet = 0, tot = 0;
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 12) { tot++; const c = Math.cos(g.rot), s = Math.sin(g.rot), u = Math.cos(a) * g.rx * 1.75, v = Math.sin(a) * g.rz * 1.75; if (course.surfaceAt(g.x + u * c - v * s, g.z + u * s + v * c).id === SURF.WATER) wet++; }
+    assert(wet / tot > 0.9, `${L.name}: only ${wet}/${tot} directions off the green are water`);
+  }
 });
 
 if (failures.length) { console.log(`\n${failures.length} check(s) failed`); process.exit(1); }

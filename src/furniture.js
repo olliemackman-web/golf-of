@@ -65,7 +65,7 @@ export function buildFurniture(course, { space = false, birds = true } = {}) {
   L.clear = [];
 
   // tee markers: a pair of painted blocks either side of the ball
-  const markCol = [0x2456d8, 0xf2f0e8, 0xd8a020][L.courseIndex || 0] || 0x2456d8;
+  const markCol = { riverbend: 0x2456d8, gosfield: 0xf2f0e8, highland: 0xd8a020 }[L.courseId] || 0x2456d8;
   const mk = std(space ? 0x9fe8ff : markCol, { roughness: 0.45, emissive: space ? 0x1a6a80 : 0x000000 });
   const half = Math.min(2.6, t.w / 2 - 1);
   for (const dx of [-half, half]) {

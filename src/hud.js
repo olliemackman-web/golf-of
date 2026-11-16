@@ -114,7 +114,7 @@ export class Hud {
     for (const p of L.spline) add(p[0], p[1], L.halfWidth + 20);
     add(L.tee.x, L.tee.z, 20); add(L.green.x, L.green.z, 40);
     for (const b of L.bunkers) add(b.x, b.z, 12);
-    if (L.pond) add(L.pond.x, L.pond.z, Math.max(L.pond.rx, L.pond.rz) + 10);
+    for (const q of L.ponds || (L.pond ? [L.pond] : [])) add(q.x, q.z, Math.min(70, Math.max(q.rx, q.rz)) + 10);
     let x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
     // keep the map's aspect
     const aspect = MW / MH; let w = x1 - x0, h = z1 - z0;
