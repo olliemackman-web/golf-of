@@ -177,11 +177,14 @@ export class Ball {
     let vn = v.x * n.x + v.y * n.y + v.z * n.z;
     v.x -= vn * n.x; v.y -= vn * n.y; v.z -= vn * n.z;
     // gravity along the slope
-    const gx = -G * n.y * n.x, gy = -G * (1 - n.y * n.y), gz = -G * n.y * n.z;
+    // (the normal leans downhill, so the pull along the ground is +n.x, +n.z; this was once negated,
+    // which made every putt break up the slope)
+    const gx = G * n.y * n.x, gy = -G * (1 - n.y * n.y), gz = G * n.y * n.z;
     const sp = Math.hypot(v.x, v.y, v.z);
     // rolling resistance opposes motion; grows a bit at low speed (grass grain)
     const ls = this.landSpin || 0;
-    const dec = S.roll * (1 + (sp < 0.6 ? 0.6 * (1 - sp / 0.6) : 0)) * (ls < 0 ? 1 - 0.35 * -ls : 1 + 0.6 * ls);
+    const firm = surf.id === SURF.GREEN || surf.id === SURF.SAND ? 1 : (this.course.rollScale || 1);
+    const dec = S.roll * firm * (1 + (sp < 0.6 ? 0.6 * (1 - sp / 0.6) : 0)) * (ls < 0 ? 1 - 0.35 * -ls : 1 + 0.6 * ls);
     if (sp > 1e-4) {
       const dv = Math.min(sp, dec * h);
       v.x -= v.x / sp * dv; v.y -= v.y / sp * dv; v.z -= v.z / sp * dv;

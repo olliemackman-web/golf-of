@@ -346,6 +346,7 @@ class Game {
   }
 
   holeBlurb(L) {
+    if (L.blurb) return `Hole ${L.number} · ${L.name} · Par ${L.par} · ${L.yards} yds. ${L.blurb}`;
     if (L.space) {
       const k = L.space.islands.length;
       const isl = k === 0 ? 'Nothing between the tee and the green but void' : k === 1 ? 'One island to carry to, then the green' : `${k} islands to pick a route through`;
@@ -508,15 +509,23 @@ class Game {
     const dir = this.aimDir(), lie = this.lieId();
     const from = { x: this.ball.pos.x, y: this.ball.pos.y, z: this.ball.pos.z };
     const want = this.distToPin() + (this.club.putter ? 0.4 : 0);
+    let wet = false;
     const endDist = (pw) => {
       const r = simulateShot(this.course, from, { x: dir.x, z: dir.z }, shotParams(this.club, pw, 0, lie, this.mods()), { wind: this.windBase, trees: this.trees, maxT: 30 });
+      wet = r.mode === 'water';
       return Math.hypot(r.end.x - from.x, r.end.z - from.z);
     };
-    if (endDist(1) <= want) { this.planPower = 1; return; }
-    let lo = this.club.putter ? 0.08 : 0.3, hi = 1;
-    if (endDist(lo) >= want) { this.planPower = lo; return; }
-    for (let i = 0; i < 7; i++) { const mid = (lo + hi) / 2; if (endDist(mid) < want) lo = mid; else hi = mid; }
-    this.planPower = Math.round(((lo + hi) / 2) * 100) / 100;
+    const pick = () => {
+      if (endDist(1) <= want) return 1;
+      let lo = this.club.putter ? 0.08 : 0.3, hi = 1;
+      if (endDist(lo) >= want) return lo;
+      for (let i = 0; i < 7; i++) { const mid = (lo + hi) / 2; if (endDist(mid) < want) lo = mid; else hi = mid; }
+      return Math.round(((lo + hi) / 2) * 100) / 100;
+    };
+    let pw = pick();
+    // if that finishes in the water, lay up: back the power off until the ball stays dry
+    if (!this.club.putter) { endDist(pw); if (wet) for (let p = pw - 0.03; p >= 0.3; p -= 0.03) { endDist(p); if (!wet) { pw = Math.round(p * 100) / 100; break; } } }
+    this.planPower = pw;
   }
   carryEstimate(c) {
     const base = { DR: 210, '3W': 197, '4H': 180, '5I': 170, '7I': 152, '9I': 128, PW: 112, SW: 81, PT: 0 }[c.id];

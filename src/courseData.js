@@ -142,6 +142,7 @@ const SPACE = [
 export const COURSES = [
   { id: 'riverbend', name: 'Riverbend', par: 72, blurb: 'Generated parkland — doglegs, ponds and deep bunkers.', hole: (n) => makeHole(n) },
   { id: 'gosfield', name: 'Gosfield Lake', par: 72, blurb: 'The real Essex 18, hole by hole: Gosfield Hall to Paddock Pond.', hole: (n) => makeHoleFromSpec(GOSFIELD[n], n) },
+  { id: 'highland', name: 'Highland Lakes', par: 72, blurb: 'A hill course: climbs and drops, leaning fairways, sloping greens, lochs and two island greens. The ball goes where the ground sends it.', hole: (n) => makeHoleFromSpec({ ...HIGHLAND[n], seed: 300 + n * 7, firm: true }, n) },
   { id: 'starfall', name: 'Starfall', par: 72, blurb: 'Turf islands adrift in deep space. Tiny greens, fairways you have to carry to, and nothing but void between. Hard.', hole: (n) => makeSpaceHole(SPACE[n], n) },
 ];
 
@@ -196,8 +197,13 @@ export function makeHoleFromSpec(spec, n) {
   const endDir = Math.atan2(last[0] - prev[0], last[1] - prev[1]);
   const gs = spec.green || {};
   const green = { x: last[0] + Math.sin(endDir) * 6, z: last[1] + Math.cos(endDir) * 6, rx: gs.rx || 14, rz: gs.rz || 12, rot: endDir + Math.PI / 2 + (gs.narrow ? 0 : (rnd() - 0.5) * 0.4) };
+  if (spec.land) { green.slope = gs.slope || 0; green.dir = (gs.dir || 0) * Math.PI / 180; green.tier = gs.tier || 0; green.fx = Math.sin(endDir); green.fz = Math.cos(endDir); }
   const pa = rnd() * Math.PI * 2, pr = rnd() * 4;
   const pin = { x: green.x + Math.cos(pa) * pr, z: green.z + Math.sin(pa) * pr };
+  if (green.tier) { // keep the hole off the step between the two levels
+    const along = (pin.x - green.x) * green.fx + (pin.z - green.z) * green.fz;
+    if (Math.abs(along) < 3.2) { const push = (along >= 0 ? 3.6 : -3.6) - along; pin.x += green.fx * push; pin.z += green.fz * push; }
+  }
   const tee = { x: pts[0][0], z: pts[0][1] - 14, w: 9, l: 14 };
   const halfWidth = spec.halfWidth || (par === 3 ? 14 : 16);
   const sideOf = (t, off) => {
@@ -227,7 +233,28 @@ export function makeHoleFromSpec(spec, n) {
     pond = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.rot + (q.side === 'C' ? Math.PI / 2 : 0) };
   }
   const size = Math.max(520, Math.ceil((len + 200) / 20) * 20);
-  const L = { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C', scenery: spec.scenery || null, fairwayFromTee: !!spec.fairwayFromTee };
+  const L = { index: n, number: n + 1, name: spec.name, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: spec.seed || 40 + n, yards: spec.yards, bendAngle, carry: spec.pond && spec.pond.side === 'C', scenery: spec.scenery || null, fairwayFromTee: !!spec.fairwayFromTee };
+  if (spec.land) {
+    L.land = { rise: 0, dip: 0, tilt: 0, crown: 0, mounds: 0, hills: 1.5, bowl: 0, ...spec.land };
+    L.blurb = spec.blurb || ''; L.firm = !!spec.firm; L.islands = [];
+    L.ponds = (spec.lakes || []).map((q, i) => {
+      const off = q.off != null ? q.off : q.side === 'C' ? 0 : (q.side === 'L' ? 1 : -1) * (halfWidth + q.rx * 0.8);
+      const p = alongHole(L, q.at, off);
+      return { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.dir, seed: 3 + i * 5 };
+    });
+    L.pond = L.ponds[0] || null; L.carry = (spec.lakes || []).some((q) => q.side === 'C');
+    if (spec.island === 'green') { L.ponds[0].x = green.x; L.ponds[0].z = green.z; L.islands.push({ x: green.x, z: green.z, rx: green.rx * 1.42, rz: green.rz * 1.42, rot: green.rot, green: true }); L.islandGreen = true; }
+    else if (spec.island) { const p = alongHole(L, spec.island.at, spec.island.off || 0); L.islands.push({ x: p.x, z: p.z, rx: spec.island.rx, rz: spec.island.rz, rot: p.dir }); }
+    // each loch finds its own level: just under the lowest ground on its shore
+    for (const q of L.ponds) {
+      // (the low shore is banked up to hold the water, the high shore is left as a bank above it)
+      const hs = [];
+      for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2, c = Math.cos(q.rot), s = Math.sin(q.rot), u = Math.cos(a) * q.rx * 1.22, v = Math.sin(a) * q.rz * 1.22; hs.push(landHeight(L, q.x + u * c - v * s, q.z + u * s + v * c)); }
+      hs.sort((a, b) => a - b);
+      q.level = hs[7] - 0.5;
+      for (const k of L.islands) if (ellipseDist(k.x, k.z, q) < 1) q.level = Math.min(q.level, landHeight(L, k.x, k.z) - 1.1);
+    }
+  }
   if (spec.scenery && spec.scenery.lake) {
     const q = spec.scenery.lake; const p = alongHole(L, q.at, q.off);
     const lake = { x: p.x, z: p.z, rx: q.rx, rz: q.rz, rot: p.dir, seed: 7 };
@@ -297,6 +324,121 @@ export function makeHole(n) {
   return { index: n, number: n + 1, par, len, size, res: 512, maskRes: 1024, spline: pts, halfWidth, tee, green, pin, bunkers, pond, seed: n + 1, yards: Math.round(yards), bendAngle };
 }
 
+// ---- Highland Lakes: a hill course laid out by hand ----
+// Same spec shape as Gosfield, plus the ground itself:
+//   land: { rise (m, green above the tee; negative = downhill), dip (m, + = a valley through the middle,
+//           - = over a crest), tilt (cross slope, m per m, + = high on the left so the ball runs right),
+//           crown (the fairway falls away on both sides), mounds (m of roll in the fairway), hills (how
+//           rugged the ground beside the hole is), bowl (m, banks round the green that feed the ball in) }
+//   green: { rx, rz, slope (m per m), dir (degrees: 0 = falls toward the front, 90 = falls to the left,
+//           180 = away from you, -90 = to the right), tier (m: the back half is a raised shelf) }
+//   lakes: [{ at, off | side, rx (across), rz (along) }]   several per hole; side 'C' lies across the line
+//   island: 'green' — the green stands in the first lake; or { at, rx, rz } — a landing island in it
+const HIGHLAND = [
+  { name: 'First Light', par: 4, yards: 385, bend: { at: 0.55, deg: 8 }, halfWidth: 18,
+    land: { rise: -7, dip: 1, tilt: 0.025, mounds: 0.5, hills: 1.5 },
+    green: { rx: 15, rz: 13, slope: 0.022, dir: 0 },
+    lakes: [{ at: 0.6, side: 'R', rx: 26, rz: 44 }],
+    bunkers: [{ at: 0.58, side: 'L', rx: 8, rz: 5 }, { green: 'L', rx: 6, rz: 4 }],
+    blurb: 'Downhill from a high tee. The fairway leans to the right, toward the loch.' },
+  { name: 'The Saddle', par: 5, yards: 525, bend: { at: 0.45, deg: -18 }, halfWidth: 17,
+    land: { rise: 10, dip: -2.5, tilt: -0.02, mounds: 0.8, hills: 1.8 },
+    green: { rx: 15, rz: 12, slope: 0.028, dir: 20, tier: 0.5 },
+    bunkers: [{ at: 0.5, side: 'R', rx: 9, rz: 5 }, { at: 0.78, side: 'L', rx: 7, rz: 5 }, { green: 'FR', rx: 6, rz: 4 }],
+    blurb: 'Uphill all the way, over a saddle at the turn. The green is on two levels.' },
+  { name: 'Heron Isle', par: 3, yards: 152, halfWidth: 13,
+    land: { rise: -6, dip: 0, hills: 1.4 },
+    green: { rx: 15, rz: 14, slope: 0.018, dir: 60 },
+    lakes: [{ at: 1.0, off: 0, rx: 42, rz: 40 }], island: 'green',
+    blurb: 'An island green from a high tee. Nothing but water short, long, left and right.' },
+  { name: 'Long Meadow', par: 4, yards: 412, halfWidth: 18,
+    land: { rise: 2, dip: 1.2, tilt: 0.05, mounds: 0.4, hills: 1.4 },
+    green: { rx: 14, rz: 13, slope: 0.03, dir: -90 },
+    lakes: [{ at: 0.5, side: 'R', rx: 24, rz: 95 }],
+    bunkers: [{ at: 0.62, side: 'L', rx: 9, rz: 5 }, { green: 'L', rx: 6, rz: 4.5 }],
+    blurb: 'The whole hole leans right. Anything landing on the right half will run toward the water.' },
+  { name: "Kelpie's Carry", par: 4, yards: 368, halfWidth: 18,
+    land: { rise: -3, dip: 0.5, mounds: 0.5, hills: 1.5 },
+    green: { rx: 14, rz: 12, slope: 0.025, dir: 180 },
+    lakes: [{ at: 0.74, side: 'C', rx: 60, rz: 26 }],
+    bunkers: [{ green: 'B', rx: 7, rz: 4 }, { at: 0.5, side: 'R', rx: 8, rz: 5 }],
+    blurb: 'Lay up short of the loch, then carry it. The green falls away from you.' },
+  { name: 'The Shelf', par: 3, yards: 184, halfWidth: 13,
+    land: { rise: 8, dip: 1.5, hills: 1.9, bowl: 1.2 },
+    green: { rx: 14, rz: 15, slope: 0.02, dir: 0, tier: 0.55 },
+    bunkers: [{ green: 'F', rx: 8, rz: 4 }, { green: 'FL', rx: 5.5, rz: 4 }],
+    blurb: 'Uphill to a two-tier green cut into the hillside. Short is in the bunker; the banks behind feed back.' },
+  { name: "Stag's Leap", par: 5, yards: 548, bend: { at: 0.5, deg: 22 }, halfWidth: 18,
+    land: { rise: -15, dip: -1, tilt: 0.02, mounds: 0.9, hills: 2.0 },
+    green: { rx: 15, rz: 13, slope: 0.025, dir: 90 },
+    lakes: [{ at: 0.93, side: 'L', rx: 26, rz: 34 }],
+    bunkers: [{ at: 0.52, side: 'L', rx: 9, rz: 5.5 }, { at: 0.74, side: 'R', rx: 8, rz: 5 }, { green: 'R', rx: 6, rz: 4 }],
+    blurb: 'A long drop from the top of the course. The green tilts left, toward the loch beside it.' },
+  { name: 'The Hollow', par: 4, yards: 342, bend: { at: 0.6, deg: -10 }, halfWidth: 17,
+    land: { rise: -1, dip: 5, tilt: -0.03, mounds: 0.6, hills: 1.6, bowl: 1.5 },
+    green: { rx: 14, rz: 12, slope: 0.03, dir: 45 },
+    bunkers: [{ at: 0.55, side: 'R', rx: 8, rz: 5 }, { green: 'F', rx: 7, rz: 4 }],
+    blurb: 'Down into a hollow and up again. The green sits in a bowl that gathers the ball.' },
+  { name: 'Homeward', par: 4, yards: 432, bend: { at: 0.6, deg: -12 }, halfWidth: 18,
+    land: { rise: 7, dip: 1.5, tilt: -0.025, mounds: 0.5, hills: 1.6 },
+    green: { rx: 15, rz: 13, slope: 0.026, dir: 0 },
+    lakes: [{ at: 0.28, side: 'R', rx: 24, rz: 38 }],
+    bunkers: [{ at: 0.62, side: 'R', rx: 9, rz: 5 }, { green: 'FL', rx: 6, rz: 4 }, { green: 'R', rx: 6, rz: 4 }],
+    blurb: 'A long climb to the turn. It plays a club more than the yardage.' },
+  { name: 'The Narrows', par: 4, yards: 396, halfWidth: 13,
+    land: { rise: 0, dip: 0.6, crown: 0.045, mounds: 0.3, hills: 1.3 },
+    green: { rx: 13, rz: 13, slope: 0.02, dir: 135 },
+    lakes: [{ at: 0.42, side: 'L', rx: 22, rz: 46 }, { at: 0.7, side: 'R', rx: 22, rz: 44 }],
+    bunkers: [{ green: 'F', rx: 6, rz: 4 }],
+    blurb: 'A narrow, crowned fairway between two lochs. Miss either side and the slope helps it in.' },
+  { name: 'Twin Islands', par: 5, yards: 575, halfWidth: 19,
+    land: { rise: -4, dip: 0, mounds: 0.5, hills: 1.5 },
+    green: { rx: 15, rz: 13, slope: 0.022, dir: -45 },
+    lakes: [{ at: 0.72, side: 'C', rx: 80, rz: 58 }], island: { at: 0.72, rx: 23, rz: 27 },
+    bunkers: [{ at: 0.45, side: 'L', rx: 9, rz: 5 }, { green: 'L', rx: 6, rz: 4 }, { green: 'B', rx: 7, rz: 4 }],
+    blurb: 'Drive short of the loch. Then either a short iron to the island in the middle or one long carry over all of it.' },
+  { name: 'Peat Bank', par: 3, yards: 141, halfWidth: 13,
+    land: { rise: -9, dip: 0, hills: 1.8 },
+    green: { rx: 14, rz: 12, slope: 0.03, dir: 0 },
+    lakes: [{ at: 0.52, side: 'C', rx: 36, rz: 20 }],
+    bunkers: [{ green: 'B', rx: 8, rz: 4 }, { green: 'L', rx: 5.5, rz: 4 }],
+    blurb: 'A short drop shot over water to a green that slopes hard back toward it.' },
+  { name: 'Ridgeback', par: 4, yards: 421, bend: { at: 0.55, deg: 10 }, halfWidth: 15,
+    land: { rise: 2, dip: -3.5, crown: 0.06, mounds: 0.4, hills: 2.0 },
+    green: { rx: 14, rz: 13, slope: 0.024, dir: -90 },
+    bunkers: [{ at: 0.5, side: 'R', rx: 8, rz: 5 }, { at: 0.56, side: 'L', rx: 8, rz: 5 }, { green: 'FR', rx: 6, rz: 4 }],
+    blurb: 'Along the spine of a ridge. The fairway falls away on both sides, so the middle is the only place to be.' },
+  { name: 'Otter Pool', par: 4, yards: 357, bend: { at: 0.48, deg: 28 }, halfWidth: 17,
+    land: { rise: -2, dip: 1.5, tilt: -0.035, mounds: 0.5, hills: 1.5 },
+    green: { rx: 14, rz: 12, slope: 0.026, dir: 90 },
+    lakes: [{ at: 0.56, side: 'L', rx: 30, rz: 40 }],
+    bunkers: [{ at: 0.62, side: 'R', rx: 9, rz: 5 }, { green: 'R', rx: 6, rz: 4 }],
+    blurb: 'A dogleg left round a loch, and the fairway leans toward it. Cut off as much as you dare.' },
+  { name: 'The Cauldron', par: 3, yards: 172, halfWidth: 13,
+    land: { rise: -4, dip: 2, hills: 2.2, bowl: 2.2 },
+    green: { rx: 13, rz: 13, slope: 0.028, dir: 200 },
+    bunkers: [{ green: 'FL', rx: 6, rz: 4 }, { green: 'FR', rx: 6, rz: 4 }, { green: 'B', rx: 7, rz: 4, far: 2 }],
+    blurb: 'A green in a deep bowl. The banks all round will throw a wide one back toward the middle.' },
+  { name: "Eagle's Fall", par: 5, yards: 502, bend: { at: 0.5, deg: -20 }, halfWidth: 18,
+    land: { rise: -11, dip: -1.5, tilt: 0.03, mounds: 0.8, hills: 1.9 },
+    green: { rx: 14, rz: 12, slope: 0.028, dir: -90 },
+    lakes: [{ at: 0.95, side: 'R', rx: 24, rz: 32 }],
+    bunkers: [{ at: 0.5, side: 'R', rx: 9, rz: 5 }, { at: 0.8, side: 'L', rx: 8, rz: 5 }, { green: 'L', rx: 6, rz: 4 }],
+    blurb: 'Downhill and reachable in two, if you take on the loch right of the green. Everything leans that way.' },
+  { name: 'Isle of Mist', par: 4, yards: 338, halfWidth: 17,
+    land: { rise: -3, dip: 1, mounds: 0.5, hills: 1.5 },
+    green: { rx: 16, rz: 15, slope: 0.02, dir: -60 },
+    lakes: [{ at: 1.0, off: 0, rx: 46, rz: 42 }], island: 'green',
+    bunkers: [{ at: 0.55, side: 'L', rx: 8, rz: 5 }],
+    blurb: 'A short four to a second island green. The drive is easy; the approach is not.' },
+  { name: 'Lochside', par: 4, yards: 446, bend: { at: 0.6, deg: -10 }, halfWidth: 18,
+    land: { rise: 6, dip: 1, tilt: -0.04, mounds: 0.5, hills: 1.6 },
+    green: { rx: 15, rz: 13, slope: 0.025, dir: 90, tier: 0.4 },
+    lakes: [{ at: 0.45, side: 'L', rx: 28, rz: 110 }],
+    bunkers: [{ at: 0.6, side: 'R', rx: 9, rz: 5 }, { green: 'R', rx: 6, rz: 4 }, { green: 'FL', rx: 6, rz: 4 }],
+    blurb: 'Home, uphill, with the loch all down the left and the ground leaning into it.' },
+];
+
 // ---- geometry helpers --------------------------------------------------
 function polyline(L) {
   if (L._poly) return L._poly;
@@ -321,16 +463,17 @@ function polyline(L) {
 /** Distance to the fairway centre line, and normalised position t along it. */
 export function splineDist(L, x, z) {
   const { pts, cum, len } = polyline(L);
-  let best = Infinity, bt = 0;
+  let best = Infinity, bt = 0, bs = 0;
   for (let i = 0; i < pts.length - 1; i++) {
     const ax = pts[i][0], az = pts[i][1], bx = pts[i + 1][0], bz = pts[i + 1][1];
     const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
     let u = ((x - ax) * dx + (z - az) * dz) / l2; u = clamp(u, 0, 1);
     const px = ax + dx * u, pz = az + dz * u;
     const d = (x - px) * (x - px) + (z - pz) * (z - pz);
-    if (d < best) { best = d; bt = (cum[i] + (cum[i + 1] - cum[i]) * u) / len; }
+    if (d < best) { best = d; bt = (cum[i] + (cum[i + 1] - cum[i]) * u) / len; bs = (x - px) * dz - (z - pz) * dx; }
   }
-  return { d: Math.sqrt(best), t: bt };
+  const dist = Math.sqrt(best);
+  return { d: dist, t: bt, s: bs >= 0 ? dist : -dist }; // s: the same distance, signed (+ = left of the line)
 }
 
 /** Point on the centre line at arc-length `s` metres from the tee end. */
@@ -384,6 +527,7 @@ export function nearestPond(L, x, z) {
 // a dip through the landing area, rising to the green.
 function profile(L, t) {
   const k = L.seed;
+  if (L.land) { const T = L.land, u = clamp(t, 0, 1); return T.rise * u * u * (3 - 2 * u) - T.dip * Math.sin(Math.PI * u) + 1.2 * (1 - smoothstep(0, 0.1, t)) + Math.sin(t * 7 + k) * 0.35; }
   return 2.6 * (1 - t) - (1.0 + 0.8 * Math.sin(k * 1.7)) * Math.sin(Math.PI * t) + 1.6 * smoothstep(0.7, 1, t) + Math.sin(t * 6 + k) * 0.5;
 }
 
@@ -394,8 +538,44 @@ export function pondLevel(L, q) {
 }
 export function waterLevel(L) { const ps = ponds(L); return ps.length ? pondLevel(L, ps[0]) : -999; }
 
+/**
+ * The lie of the land on a hill course, before bunkers are dug and lochs are flooded. Beside the
+ * hole the ground is rugged; along it the fairway follows the hole's own rise and fall, leans with
+ * its cross slope, may fall away from a crown, and rolls with mounds. The green is a tilted plane
+ * (two planes, for a tiered green), sometimes ringed with banks.
+ */
+function landHeight(L, x, z) {
+  const T = L.land, ox = L.seed * 131.7, oz = L.seed * 71.3;
+  const big = fbm((x + ox) / 210 + 10, (z + oz) / 210 + 4, 4, 2, 0.5) * 6.5 * T.hills;
+  const med = fbm((x + ox) / 55 - 3, (z + oz) / 55 + 7, 3, 2, 0.5) * 1.3 * (0.6 + 0.4 * T.hills);
+  const small = fbm(x / 9 + 1, z / 9 - 5, 2, 2, 0.5) * 0.14;
+  const { d, t, s } = splineDist(L, x, z);
+  const hw = L.halfWidth, prof = profile(L, t), sc = clamp(s, -(hw + 30), hw + 30);
+  const lean = T.tilt * sc - T.crown * Math.max(0, Math.abs(sc) - 3);
+  const wild = prof + lean + big + med + small;                 // the hillside keeps the hole's slope
+  const mown = prof + lean + med * 0.3 + fbm(x / 24 + 2 + ox, z / 24 - 4, 2, 2, 0.5) * T.mounds + small;
+  let h = lerp(wild, mown, smoothstep(hw + 34, hw + 4, d));
+  const g = L.green, eg = ellipseDist(x, z, g), gx = x - g.x, gz = z - g.z;
+  // downhill direction on the green: `dir` turned from "toward the front"
+  const cd = Math.cos(g.dir), sd = Math.sin(g.dir), ux = -g.fx * cd - g.fz * sd, uz = -g.fz * cd + g.fx * sd;
+  const along = gx * g.fx + gz * g.fz;
+  let hg = profile(L, 1) + 0.9 - g.slope * (gx * ux + gz * uz) + g.tier * (smoothstep(-2.6, 2.6, along) - 0.5) + fbm(x / 7, z / 7, 2) * 0.04;
+  h = lerp(h, hg, smoothstep(1.75, 1.0, eg));
+  if (T.bowl) h += T.bowl * smoothstep(1.25, 2.3, eg) * (1 - smoothstep(2.3, 3.8, eg));
+  const tdx = x - L.tee.x, tdz = z - L.tee.z;
+  h = lerp(h, profile(L, 0) + 0.35, smoothstep(1.35, 1.0, Math.max(Math.abs(tdx) / (L.tee.w / 2), Math.abs(tdz) / (L.tee.l / 2))));
+  return h;
+}
+/** How far inside one of the hole's islands (x, z) is: 1 on the island, 0 in the water round it. */
+function islandWeight(L, x, z) {
+  let w = 0;
+  for (const k of L.islands || []) w = Math.max(w, smoothstep(1.12, 0.98, ellipseDist(x, z, k) + fbm(x / 9 + 4, z / 9, 2) * 0.05));
+  return w;
+}
+
 /** Terrain height ignoring ponds and bunkers — used to pick a water level for a decorative lake. */
 function terrainHeightBase(L, x, z) {
+  if (L.land) return landHeight(L, x, z);
   const ox = L.seed * 131.7, oz = L.seed * 71.3;
   const big = fbm((x + ox) / 210 + 10, (z + oz) / 210 + 4, 4, 2, 0.5) * 6.5;
   const med = fbm((x + ox) / 55 - 3, (z + oz) / 55 + 7, 3, 2, 0.5) * 1.3;
@@ -452,6 +632,24 @@ function spaceWeights(L, x, z) {
 /** The terrain height function everything is sampled from. */
 export function terrainHeight(L, x, z) {
   if (L.space) return spaceHeight(L, x, z);
+  if (L.land) {
+    let h = landHeight(L, x, z);
+    for (const b of L.bunkers) {
+      const e = ellipseDist(x, z, b) + fbm(x / 6, z / 6, 2) * 0.08;
+      h -= smoothstep(1.15, 0.75, e) * 0.75;
+      h += smoothstep(1.35, 1.1, e) * (1 - smoothstep(1.1, 0.95, e)) * 0.12;
+    }
+    for (const q of ponds(L)) {
+      const pe = pondDistOne(q, x, z);
+      if (pe < 1.6) {
+        const wl = pondLevel(L, q), isl = islandWeight(L, x, z);
+        let hw = lerp(h, wl - 2.4, smoothstep(1.12, 0.9, pe));
+        if (pe > 1.0) hw = Math.max(hw, wl + 0.3 * smoothstep(1.0, 1.15, pe) * (1 - smoothstep(1.3, 1.6, pe)));
+        h = lerp(hw, Math.max(h, wl + 0.7), isl); // an island keeps its own ground, clear of the water
+      }
+    }
+    return h;
+  }
   const ox = L.seed * 131.7, oz = L.seed * 71.3;
   const big = fbm((x + ox) / 210 + 10, (z + oz) / 210 + 4, 4, 2, 0.5) * 6.5;
   const med = fbm((x + ox) / 55 - 3, (z + oz) / 55 + 7, 3, 2, 0.5) * 1.3;
@@ -504,7 +702,8 @@ export function surfaceWeights(L, x, z) {
   const tee = smoothstep(1.06, 0.98, Math.max(tdx, tdz));
   let sand = 0;
   for (const b of L.bunkers) { const e = ellipseDist(x, z, b) + fbm(x / 6, z / 6, 2) * 0.08; sand = Math.max(sand, smoothstep(1.02, 0.94, e)); }
-  const water = ponds(L).length ? smoothstep(1.0, 0.96, pondDist(L, x, z)) : 0;
+  let water = ponds(L).length ? smoothstep(1.0, 0.96, pondDist(L, x, z)) : 0;
+  if (water > 0 && L.islands && L.islands.length) water *= 1 - islandWeight(L, x, z);
   return { fairway, green, sand, water, tee };
 }
 
@@ -570,6 +769,7 @@ export class Course {
     this.size = L.size; this.res = L.res; this.maskRes = L.maskRes;
     // Starfall: anything that drops below the void level is gone (the ball treats it like water)
     this.voidLevel = L.space ? L.space.voidLevel : null;
+    this.rollScale = L.firm ? 0.6 : 1; // a firm, fast-running course: the ball rolls out further and slopes have more say
     this.waterLevel = L.space ? L.space.voidLevel : waterLevel(L);
     this.ponds = ponds(L).map((q) => ({ pond: q, level: pondLevel(L, q) }));
     const N = L.res, half = L.size / 2, step = L.size / (N - 1);
