@@ -113,8 +113,10 @@ export class Hud {
     const add = (x, z, m = 0) => { xs.push(x - m, x + m); zs.push(z - m, z + m); };
     for (const p of L.spline) add(p[0], p[1], L.halfWidth + 20);
     add(L.tee.x, L.tee.z, 20); add(L.green.x, L.green.z, 40);
-    for (const b of L.bunkers) add(b.x, b.z, 12);
-    for (const q of L.ponds || (L.pond ? [L.pond] : [])) add(q.x, q.z, Math.min(70, Math.max(q.rx, q.rz)) + 10);
+    // (a mapped course lists every bunker and pond on the property: only frame the ones by this hole)
+    const byHole = (q) => !L.shapes || L.spline.some((p) => Math.hypot(p[0] - q.x, p[1] - q.z) < 38) || Math.hypot(L.green.x - q.x, L.green.z - q.z) < 38;
+    for (const b of L.bunkers) if (byHole(b)) add(b.x, b.z, 12);
+    for (const q of L.ponds || (L.pond ? [L.pond] : [])) if (byHole(q)) add(q.x, q.z, Math.min(70, Math.max(q.rx, q.rz)) + 10);
     let x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
     // keep the map's aspect
     const aspect = MW / MH; let w = x1 - x0, h = z1 - z0;

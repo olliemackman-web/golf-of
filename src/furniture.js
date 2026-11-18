@@ -58,6 +58,26 @@ function buildBench() {
   return g;
 }
 
+/** A strip draped on the ground along a line of [x, z] points, three vertices across so it follows a cross-slope. */
+function ribbon(course, path, w, color) {
+  const pos = [], uv = [], idx = [];
+  path.forEach(([x, z], i) => {
+    const a = path[Math.max(0, i - 1)], b = path[Math.min(path.length - 1, i + 1)];
+    let nx = -(b[1] - a[1]), nz = b[0] - a[0]; const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+    for (const k of [-1, 0, 1]) { const px = x + nx * w * k, pz = z + nz * w * k; pos.push(px, course.heightAt(px, pz) + 0.05, pz); uv.push(k * 0.5 + 0.5, i * 0.5); }
+    if (i) { const o = (i - 1) * 3; idx.push(o, o + 3, o + 1, o + 1, o + 3, o + 4, o + 1, o + 4, o + 2, o + 2, o + 4, o + 5); }
+  });
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, std(color, { roughness: 0.95, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  m.receiveShadow = true; return m;
+}
+/** Split a line into pieces no longer than `step` so a ribbon laid along it can follow the ground. */
+function densify(pts, step = 4) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i], n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step)); for (let k = 1; k <= n; k++) out.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]); }
+  return out;
+}
+
 export function buildFurniture(course, { space = false, birds = true } = {}) {
   const g = new THREE.Group(), L = course.layout, t = L.tee;
   const H = (x, z) => course.heightAt(x, z);
@@ -65,7 +85,7 @@ export function buildFurniture(course, { space = false, birds = true } = {}) {
   L.clear = [];
 
   // tee markers: a pair of painted blocks either side of the ball
-  const markCol = { riverbend: 0x2456d8, gosfield: 0xf2f0e8, highland: 0xd8a020 }[L.courseId] || 0x2456d8;
+  const markCol = { riverbend: 0x2456d8, gosfield: 0xf2f0e8, highland: 0xd8a020, oldjoes: 0xd22b25 }[L.courseId] || 0x2456d8;
   const mk = std(space ? 0x9fe8ff : markCol, { roughness: 0.45, emissive: space ? 0x1a6a80 : 0x000000 });
   const half = Math.min(2.6, t.w / 2 - 1);
   for (const dx of [-half, half]) {
@@ -87,7 +107,7 @@ export function buildFurniture(course, { space = false, birds = true } = {}) {
   const bench = buildBench(); const bx = t.x + side + 0.6, bz = t.z - 1.5; bench.position.set(bx, H(bx, bz), bz); bench.rotation.y = -Math.PI / 2 + 0.25; g.add(bench);
 
   // yardage posts on both edges of the fairway: red 100, white 150, blue 200 yards from the middle of the green
-  for (const [yd, col] of [[100, 0xd22b25], [150, 0xf4f2ea], [200, 0x2456d8]]) {
+  for (const [yd, col] of L.shapes ? [] : [[100, 0xd22b25], [150, 0xf4f2ea], [200, 0x2456d8]]) {
     const tt = 1 - (yd * 0.9144) / (L.len || 400); if (tt < 0.08) continue;
     for (const s of [-1, 1]) {
       const p = alongHole(L, tt, s * ((L.halfWidth || 16) + 1.5));
@@ -100,7 +120,7 @@ export function buildFurniture(course, { space = false, birds = true } = {}) {
   const rakeMat = std(0xb9b29a), rakeHead = std(0x2f6a3a);
   for (const b of L.bunkers) {
     const a = (b.x * 0.37 + b.z * 0.11) % 6.28, rx = b.x + Math.cos(a) * (b.rx + 1.1), rz = b.z + Math.sin(a) * (b.rz + 1.1);
-    if (course.surfaceAt(rx, rz).w.sand > 0.2) continue;
+    if (course.surfaceAt(rx, rz).id !== 0) continue; // only on rough: not in sand, on a green or across a fairway
     const r = new THREE.Group();
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.5, 6), rakeMat); shaft.rotation.z = Math.PI / 2; shaft.castShadow = true; r.add(shaft);
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.42), rakeHead); head.position.x = 0.75; r.add(head);
@@ -109,21 +129,38 @@ export function buildFurniture(course, { space = false, birds = true } = {}) {
 
   // cart path: a ribbon draped on the ground, three vertices across so it follows a cross-slope
   const path = cartPath(L);
-  if (path.length > 1) {
-    const pos = [], uv = [], idx = [], w = 1.15;
-    path.forEach(([x, z], i) => {
-      const a = path[Math.max(0, i - 1)], b = path[Math.min(path.length - 1, i + 1)];
-      let nx = -(b[1] - a[1]), nz = b[0] - a[0]; const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
-      for (const k of [-1, 0, 1]) { const px = x + nx * w * k, pz = z + nz * w * k; pos.push(px, H(px, pz) + 0.05, pz); uv.push(k * 0.5 + 0.5, i * 0.5); }
-      if (i) { const o = (i - 1) * 3; idx.push(o, o + 3, o + 1, o + 1, o + 3, o + 4, o + 1, o + 4, o + 2, o + 2, o + 4, o + 5); }
-    });
-    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); geo.setIndex(idx); geo.computeVertexNormals();
-    const pm = new THREE.Mesh(geo, std(0xb9ae98, { roughness: 0.95, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-    pm.receiveShadow = true; g.add(pm);
+  if (path.length > 1) g.add(ribbon(course, path, 1.15, 0xb9ae98));
+
+  // a mapped course brings its own buildings and roads
+  if (L.shapes) {
+    const wallM = std(0xe6dfcc), roofM = std(0x4a4f55, { roughness: 0.9 });
+    for (const pts of L.shapes.buildings) {
+      const sh = new THREE.Shape(); pts.forEach(([x, z], i) => (i ? sh.lineTo(x, -z) : sh.moveTo(x, -z)));
+      let lo = Infinity, cx = 0, cz = 0; for (const [x, z] of pts) { lo = Math.min(lo, H(x, z)); cx += x / pts.length; cz += z / pts.length; }
+      const area = Math.abs(THREE.ShapeUtils.area(pts.map(([x, z]) => new THREE.Vector2(x, z)))), tall = area > 200 ? 4.2 : area > 60 ? 3.4 : 2.6;
+      const geo = new THREE.ExtrudeGeometry(sh, { depth: tall + 0.6, bevelEnabled: false }); geo.rotateX(-Math.PI / 2);
+      const m = new THREE.Mesh(geo, [roofM, wallM]); m.position.y = lo - 0.6; m.castShadow = true; m.receiveShadow = true; g.add(m);
+      L.clear.push({ x: cx, z: cz, r: Math.sqrt(area) * 0.8 + 4 });
+    }
+    // the old post-and-rail fence each hedge has grown up round (and any fence the map shows on its own)
+    const runs = [...L.shapes.hedges, ...L.shapes.fences].map((p) => densify(p, 2.4)), nSeg = runs.reduce((a, r) => a + r.length, 0);
+    if (nSeg) {
+      const wood = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), std(0x6b543a, { roughness: 0.95 }), nSeg * 3);
+      const mt = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), pv = new THREE.Vector3(), X = new THREE.Vector3(1, 0, 0), dv = new THREE.Vector3(); let k = 0;
+      for (const r of runs) r.forEach(([x, z], i) => {
+        const y = H(x, z);
+        mt.compose(pv.set(x, y + 0.6, z), q.identity(), sv.set(0.11, 1.35, 0.11)); wood.setMatrixAt(k++, mt);
+        if (!i) return;
+        const [px, pz] = r[i - 1], py = H(px, pz);
+        for (const up of [0.5, 0.98]) { dv.set(x - px, y - py, z - pz); const len = dv.length(); mt.compose(pv.set((x + px) / 2, (y + py) / 2 + up, (z + pz) / 2), q.setFromUnitVectors(X, dv.normalize()), sv.set(len, 0.1, 0.04)); wood.setMatrixAt(k++, mt); }
+      });
+      wood.count = k; wood.castShadow = true; g.add(wood);
+    }
+    for (const r of L.shapes.roads) g.add(ribbon(course, densify(r.pts), r.kind === 'service' ? 1.6 : 2.6, r.kind === 'service' ? 0x8f8a80 : 0x5f6166));
   }
 
   // the clubhouse stands behind the first, tenth and last tees
-  if ([0, 9, 17].includes(L.index)) {
+  if ([0, 9, 17].includes(L.index) && !L.shapes) {
     const cx = t.x - fx * 46 + fz * 16, cz = t.z - fz * 46 - fx * 16;
     if (course.inBounds(cx, cz)) {
       const ch = buildClubhouse(); ch.position.set(cx, Math.max(H(cx, cz), course.waterLevel + 0.5), cz); ch.rotation.y = start.dir + 0.18; g.add(ch);
