@@ -346,7 +346,7 @@ class Game {
   }
 
   holeBlurb(L) {
-    if (L.blurb) return `Hole ${L.number} · ${L.name} · Par ${L.par} · ${L.yards} yds. ${L.blurb}`;
+    if (L.blurb) return `Hole ${L.number}${L.name ? ' · ' + L.name : ''} · Par ${L.par} · ${L.yards} yds. ${L.blurb}`;
     if (L.space) {
       const k = L.space.islands.length;
       const isl = k === 0 ? 'Nothing between the tee and the green but void' : k === 1 ? 'One island to carry to, then the green' : `${k} islands to pick a route through`;

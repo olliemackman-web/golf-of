@@ -2,6 +2,7 @@
 // for whichever hole is being played. No three.js here so the same code runs
 // in node for calibration.
 import { fbm, smoothstep, clamp, lerp, mulberry32 } from './noise.js';
+import { OLDJOES } from './oldjoesData.js';
 
 export const SURF = { ROUGH: 0, FAIRWAY: 1, GREEN: 2, SAND: 3, WATER: 4, TEE: 5 };
 export const SURF_NAME = ['Rough', 'Fairway', 'Green', 'Bunker', 'Water', 'Tee'];
@@ -143,6 +144,7 @@ export const COURSES = [
   { id: 'riverbend', name: 'Riverbend', par: 72, blurb: 'Generated parkland — doglegs, ponds and deep bunkers.', hole: (n) => makeHole(n) },
   { id: 'gosfield', name: 'Gosfield Lake', par: 72, blurb: 'The real Essex 18, hole by hole: Gosfield Hall to Paddock Pond.', hole: (n) => makeHoleFromSpec(GOSFIELD[n], n) },
   { id: 'highland', name: 'Highland Lakes', par: 72, blurb: 'A hill course: climbs and drops, leaning fairways, sloping greens, lochs and two island greens. The ball goes where the ground sends it.', hole: (n) => makeHoleFromSpec({ ...HIGHLAND[n], seed: 300 + n * 7, firm: true }, n) },
+  { id: 'oldjoes', name: "Old Joe's", par: 54, blurb: 'The real nine-hole pitch and putt at Great Cornard, Suffolk, laid out from its map and played twice round. Short holes, small greens, nowhere to hide.', credit: 'Map data © OpenStreetMap contributors', hole: (n) => makeMapHole(OLDJOES_COURSE, n) },
   { id: 'starfall', name: 'Starfall', par: 72, blurb: 'Turf islands adrift in deep space. Tiny greens, fairways you have to carry to, and nothing but void between. Hard.', hole: (n) => makeSpaceHole(SPACE[n], n) },
 ];
 
@@ -439,6 +441,168 @@ const HIGHLAND = [
     blurb: 'Home, uphill, with the loch all down the left and the ground leaning into it.' },
 ];
 
+// Old Joe's: the generated map data, plus what the map cannot show. Holes 1 to 6 have a low bank of
+// fairway, about a foot high, round the green, open where the fairway runs in.
+const OLDJOES_COURSE = { ...OLDJOES, berms: [1, 2, 3, 4, 5, 6] };
+
+// ---- Courses built from a map (tools/osm2course.mjs) ----
+// The map gives every shape on the course in metres east and north. Each hole is built in its own
+// frame (the tee-to-green line runs up +z through the middle), but with the whole course laid out
+// round it, so the next green and the hedge behind the tee are where they really are.
+
+/** A polygon ready for point tests: flat [x, z, x, z...] with its bounding box. */
+function packPoly(pts) {
+  const p = new Float64Array(pts.length * 2); let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, cx = 0, cz = 0;
+  pts.forEach(([x, z], i) => { p[i * 2] = x; p[i * 2 + 1] = z; x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); cx += x; cz += z; });
+  return { p, n: pts.length, x0, x1, z0, z1, cx: cx / pts.length, cz: cz / pts.length };
+}
+/** Signed distance to a packed polygon's edge: positive inside, negative outside (-99 when well clear of it). */
+export function polyDist(P, x, z, margin = 6) {
+  if (x < P.x0 - margin || x > P.x1 + margin || z < P.z0 - margin || z > P.z1 + margin) return -99;
+  const a = P.p, n = P.n; let inside = false, best = Infinity;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = a[i * 2], zi = a[i * 2 + 1], xj = a[j * 2], zj = a[j * 2 + 1];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+    const dx = xj - xi, dz = zj - zi, l2 = dx * dx + dz * dz; let u = l2 ? ((x - xi) * dx + (z - zi) * dz) / l2 : 0; u = u < 0 ? 0 : u > 1 ? 1 : u;
+    const ex = x - xi - dx * u, ez = z - zi - dz * u, d = ex * ex + ez * ez; if (d < best) best = d;
+  }
+  return inside ? Math.sqrt(best) : -Math.sqrt(best);
+}
+/** The ellipse that best covers a polygon's outline: centre, radii and turn, in the layout's ellipse convention. */
+function fitEllipse(pts) {
+  let cx = 0, cz = 0; for (const [x, z] of pts) { cx += x; cz += z; } cx /= pts.length; cz /= pts.length;
+  let sxx = 0, szz = 0, sxz = 0; for (const [x, z] of pts) { sxx += (x - cx) ** 2; szz += (z - cz) ** 2; sxz += (x - cx) * (z - cz); }
+  sxx /= pts.length; szz /= pts.length; sxz /= pts.length;
+  const rot = 0.5 * Math.atan2(2 * sxz, sxx - szz), t = (sxx + szz) / 2, k = Math.hypot((sxx - szz) / 2, sxz);
+  return { x: cx, z: cz, rx: Math.max(1.5, Math.sqrt(2 * (t + k))), rz: Math.max(1.5, Math.sqrt(2 * Math.max(0.01, t - k))), rot };
+}
+/** The gently rolling ground a mapped course sits on, by its real-world position, so it is the same from every hole. */
+function mapBase(wx, wy) { return fbm(wx / 150 + 3, wy / 150 - 2, 3, 2, 0.5) * 1.8 + fbm(wx / 45 + 7, wy / 45, 2, 2, 0.5) * 0.4 + fbm(wx / 9, wy / 9 + 5, 2, 2, 0.5) * 0.08; }
+
+/**
+ * Build hole n of a mapped course. A nine-hole course is played twice round: the second time each
+ * hole is the same ground with the pin moved to the other side of the green.
+ */
+export function makeMapHole(M, n) {
+  const N9 = M.holes.length, k = n % N9, second = n >= N9, H = M.holes[k];
+  const a = H.pts[0], b = H.pts[H.pts.length - 1], dl = Math.hypot(b[0] - a[0], b[1] - a[1]), d0 = (b[0] - a[0]) / dl, d1 = (b[1] - a[1]) / dl;
+  const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+  // map (east, north) -> hole frame: z runs from tee to green, +x is to the left of that line
+  const loc = ([px, py]) => [-((px - mx) * d1 - (py - my) * d0), (px - mx) * d0 + (py - my) * d1];
+  const locAll = (pts) => pts.map(loc);
+  const frame = { mx, my, d0, d1 };
+  const base = (x, z) => mapBase(mx + d0 * z - d1 * x, my + d1 * z + d0 * x);
+  const size = 640, lim = size / 2 - 14, inWorld = ([x, z]) => Math.abs(x) < lim && Math.abs(z) < lim;
+  const rnd = mulberry32(8800 + k * 131);
+
+  // the hole line, resampled to nine evenly spaced points
+  const line = locAll(H.pts), cum = [0]; for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
+  const len = cum[cum.length - 1], spline = [];
+  for (let i = 0; i < 9; i++) { const s = len * i / 8; let j = 1; while (j < cum.length - 1 && cum[j] < s) j++; const u = (s - cum[j - 1]) / (cum[j] - cum[j - 1] || 1); spline.push([line[j - 1][0] + (line[j][0] - line[j - 1][0]) * u, line[j - 1][1] + (line[j][1] - line[j - 1][1]) * u]); }
+
+  const nearest = (list, p) => { let best = 0, bd = Infinity; list.forEach((q, i) => { const e = fitEllipse(q), d = Math.hypot(e.x - p[0], e.z - p[1]); if (d < bd) { bd = d; best = i; } }); return best; };
+  const greensL = M.greens.map(locAll), teesL = M.tees.map(locAll), bunkersL = M.bunkers.map(locAll), waterL = M.water.map(locAll);
+  const gi = nearest(greensL, line[line.length - 1]), ti = nearest(teesL, line[0]);
+  const green = fitEllipse(greensL[gi]), teeE = fitEllipse(teesL[ti]);
+  const tee = { x: teeE.x, z: teeE.z, w: 6, l: 8 };
+  // every green tilts its own way (by its place on the map, so it is the same green from any hole)
+  const shapes = {
+    fairways: M.fairways.map((p) => packPoly(locAll(p))),
+    greens: greensL.map((p, i) => { const P = packPoly(p), e = fitEllipse(p), g = mulberry32(4100 + i * 53), ang = g() * Math.PI * 2, mag = 0.013 + g() * 0.015, ax = Math.cos(ang) * mag, ay = Math.sin(ang) * mag; return { P, cx: e.x, cz: e.z, h: base(e.x, e.z) + 0.3, sx: -ax * d1 + ay * d0, sz: ax * d0 + ay * d1 }; }),
+    tees: teesL.map((p) => { const P = packPoly(p), e = fitEllipse(p); return { P, h: base(e.x, e.z) + 0.2 }; }),
+    bunkers: bunkersL.map((p) => packPoly(p)),
+    water: waterL.map((p) => packPoly(p)),
+    boundary: M.boundary ? packPoly(locAll(M.boundary)) : null,
+    hedges: M.hedges.map(locAll), fences: (M.fences || []).map(locAll),
+    buildings: M.buildings.map(locAll).filter((p) => p.every(inWorld)),
+    roads: M.roads.map((r) => ({ kind: r.kind, pts: locAll(r.pts).filter(inWorld) })).filter((r) => r.pts.length > 1),
+  };
+  // Old Joe's first six greens are ringed by a low bank of fairway, about a foot high, open where the
+  // fairway runs in. `berms` lists which holes have one; the opening faces back down that hole's line.
+  for (const j of M.berms || []) {
+    const Hj = M.holes[j - 1]; if (!Hj) continue;
+    const lj = locAll(Hj.pts), end = lj[lj.length - 1], prev = lj[lj.length - 2], G = shapes.greens[nearest(greensL, end)];
+    const ax = prev[0] - G.cx, az = prev[1] - G.cz, al = Math.hypot(ax, az) || 1;
+    G.berm = { ax: ax / al, az: az / al, h: 0.3 };
+  }
+  // the mapped pin first time round; the far side of the green from it the second
+  const gp = shapes.greens[gi].P; let pinL = M.pins.map(loc).reduce((best, p) => (Math.hypot(p[0] - green.x, p[1] - green.z) < Math.hypot(best[0] - green.x, best[1] - green.z) ? p : best));
+  if (polyDist(gp, pinL[0], pinL[1]) < 1.5) pinL = [green.x, green.z];
+  if (second) { // the spot on the green, clear of its edge, that is furthest from the first pin
+    let best = null, bd = -1;
+    for (let k2 = 0; k2 < 24; k2++) for (const r of [0.75, 0.55, 0.35]) { const a2 = k2 / 24 * Math.PI * 2, q = [green.x + Math.cos(a2) * green.rx * r, green.z + Math.sin(a2) * green.rz * r]; if (polyDist(gp, q[0], q[1]) < 2.2) continue; const dd = Math.hypot(q[0] - pinL[0], q[1] - pinL[1]); if (dd > bd) { bd = dd; best = q; } }
+    if (best) pinL = best;
+  }
+  const pin = { x: pinL[0], z: pinL[1] };
+  const bunkers = bunkersL.map(fitEllipse).filter((e) => inWorld([e.x, e.z]));
+  const pondList = waterL.map((p) => { const e = fitEllipse(p); return { ...e, rx: e.rx * 1.25, rz: e.rz * 1.25, seed: 3, level: base(e.x, e.z) - 0.55 }; }).filter((e) => inWorld([e.x, e.z]));
+
+  // Scenery straight off the map. A hedge is an overgrown fence line: three ranks of bushes with
+  // hawthorn and oak coming up through them (the fence itself is built with the course furniture).
+  // Woods, and scrub that lies inside the course, are stands of tall pine planted too close to play through.
+  const spots = [];
+  for (const h of shapes.hedges) for (let i = 1; i < h.length; i++) {
+    const dx = h[i][0] - h[i - 1][0], dz = h[i][1] - h[i - 1][1], l = Math.hypot(dx, dz) || 1, nx = -dz / l, nz = dx / l;
+    for (let s = 0; s < l; s += 1.7) for (const row of [-1.7, 0, 1.7]) {
+      const u = (s + rnd() * 0.8) / l, o = row + (rnd() - 0.5) * 0.9, p = [h[i - 1][0] + dx * u + nx * o, h[i - 1][1] + dz * u + nz * o];
+      if (inWorld(p)) spots.push({ x: p[0], z: p[1], kind: 'bush', h: 3 + rnd() * 1.8, soft: row !== 0 });
+    }
+    for (let s = rnd() * 5; s < l; s += 5 + rnd() * 5) { const u = s / l, o = (rnd() - 0.5) * 2.4, p = [h[i - 1][0] + dx * u + nx * o, h[i - 1][1] + dz * u + nz * o]; if (inWorld(p)) spots.push(rnd() < 0.45 ? { x: p[0], z: p[1], kind: 'oak', h: 8 + rnd() * 5 } : { x: p[0], z: p[1], kind: 'thorn', h: 5 + rnd() * 2.5 }); }
+  }
+  for (const t of M.trees.map(loc)) if (inWorld(t)) spots.push({ x: t[0], z: t[1], kind: 'oak', h: 11 + rnd() * 3 });
+  for (const r of (M.treeRows || []).map(locAll)) for (let i = 1; i < r.length; i++) { const l = Math.hypot(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1]); for (let s = 0; s < l; s += 6) { const u = s / l, p = [r[i - 1][0] + (r[i][0] - r[i - 1][0]) * u, r[i - 1][1] + (r[i][1] - r[i - 1][1]) * u]; if (inWorld(p)) spots.push({ x: p[0], z: p[1], kind: 'oak', h: 10 + rnd() * 4 }); } }
+  const stand = (P, kind, gap) => { for (let x = P.x0; x <= P.x1; x += gap) for (let z = P.z0; z <= P.z1; z += gap) { const p = [x + (rnd() - 0.5) * gap * 0.5, z + (rnd() - 0.5) * gap * 0.5]; if (polyDist(P, p[0], p[1]) > 0.6 && inWorld(p)) spots.push({ x: p[0], z: p[1], kind, h: 16 + rnd() * 5 }); } };
+  for (const w of (M.woods || []).map(locAll)) stand(packPoly(w), 'wallpine', 2.3);
+  for (const s of M.scrub.map(locAll)) {
+    const P = packPoly(s);
+    if (shapes.boundary && polyDist(shapes.boundary, P.cx, P.cz, 20) > 0) { stand(P, 'wallpine', 2.3); continue; }
+    const want = Math.min(260, (P.x1 - P.x0) * (P.z1 - P.z0) / 22);
+    for (let i = 0, got = 0; i < want * 4 && got < want; i++) { const p = [P.x0 + rnd() * (P.x1 - P.x0), P.z0 + rnd() * (P.z1 - P.z0)]; if (polyDist(P, p[0], p[1]) < 1 || !inWorld(p)) continue; got++; spots.push(rnd() < 0.18 ? { x: p[0], z: p[1], kind: 'oak', h: 8 + rnd() * 4 } : { x: p[0], z: p[1], kind: 'bush', h: 2.4 + rnd() * 2.4, soft: true }); }
+  }
+
+  const yards = Math.round(len * 1.09361);
+  const guard = bunkers.filter((e) => Math.hypot(e.x - green.x, e.z - green.z) < Math.max(green.rx, green.rz) + 14).length;
+  const wet = pondList.some((q) => splineDistPts(spline, q.x, q.z) < Math.max(q.rx, q.rz) + 14);
+  const L = { index: n, number: n + 1, par: 3, len, size, res: 512, maskRes: 1024, spline, halfWidth: 11, tee, green, pin, bunkers, pond: pondList[0] || null, ponds: pondList, seed: 700, yards, bendAngle: 0, shapes, frame, mapped: true,
+    scenery: { style: 'parkland', tufts: 0.5, trees: [], spots, boundary: shapes.boundary, woodland: { beyond: 1e9 } },
+    blurb: `${yards} yards${second ? ', second time round, with the pin moved' : ''}. ${guard ? `${guard} bunker${guard === 1 ? '' : 's'} by the green` : 'No bunkers by the green'}${wet ? ', and the pond in play' : ''}.` };
+  return L;
+}
+function splineDistPts(pts, x, z) { let best = Infinity; for (const p of pts) best = Math.min(best, Math.hypot(p[0] - x, p[1] - z)); return best; }
+
+/** Ground height on a mapped course: the rolling base, with greens and tees levelled, bunkers dug and ponds cut. */
+function mapHeight(L, x, z) {
+  const S = L.shapes, F = L.frame;
+  let h = mapBase(F.mx + F.d0 * z - F.d1 * x, F.my + F.d1 * z + F.d0 * x);
+  for (const g of S.greens) {
+    const d = polyDist(g.P, x, z, 6); if (d <= -5) continue;
+    h = lerp(h, g.h + g.sx * (x - g.cx) + g.sz * (z - g.cz), smoothstep(-4, 0.5, d));
+    if (g.berm) h += g.berm.h * bermWeight(g, x, z, d);
+  }
+  for (const t of S.tees) { const d = polyDist(t.P, x, z, 3); if (d > -2.5) h = lerp(h, t.h, smoothstep(-2, 0.3, d)); }
+  for (const b of S.bunkers) { const d = polyDist(b, x, z, 2); if (d > -1.6) h += -0.55 * smoothstep(-0.4, 1.6, d) + 0.1 * smoothstep(-1.5, -0.7, d) * (1 - smoothstep(-0.7, -0.1, d)); }
+  S.water.forEach((w, i) => { const d = polyDist(w, x, z, 7); if (d > -6 && L.ponds[i]) { const wl = L.ponds[i].level; h = d < 0 ? Math.max(h, wl + 0.18) : lerp(Math.max(h, wl + 0.18), wl - 1.8, smoothstep(0, 2.4, d)); } });
+  return h;
+}
+/** How much of a green's low surrounding bank stands at (x, z): a ridge just off the green, open toward the fairway. */
+function bermWeight(g, x, z, d) {
+  if (d > -0.5 || d < -3.4) return 0;
+  const ridge = smoothstep(-3.4, -2.2, d) * (1 - smoothstep(-1.5, -0.5, d));
+  const rx = x - g.cx, rz = z - g.cz, rl = Math.hypot(rx, rz) || 1, facing = (rx * g.berm.ax + rz * g.berm.az) / rl; // 1 = straight back down the hole
+  return ridge * (1 - smoothstep(0.62, 0.86, facing));
+}
+/** Surface weights on a mapped course, straight from the mapped shapes. */
+function mapWeights(L, x, z) {
+  const S = L.shapes, wob = fbm(x / 5 + 1, z / 5, 2, 2, 0.5) * 0.3;
+  let fairway = 0, green = 0, tee = 0, sand = 0, water = 0;
+  for (const f of S.fairways) { const d = polyDist(f, x, z, 2); if (d > -1.5) fairway = Math.max(fairway, smoothstep(-0.7, 0.7, d + wob)); }
+  for (const g of S.greens) { const d = polyDist(g.P, x, z, 4); if (d > -1) green = Math.max(green, smoothstep(-0.4, 0.4, d + wob * 0.3)); if (g.berm && d > -4) fairway = Math.max(fairway, smoothstep(-3.9, -3.3, d)); } // the bank is mown as fairway
+  for (const t of S.tees) { const d = polyDist(t.P, x, z, 2); if (d > -1) tee = Math.max(tee, smoothstep(-0.3, 0.3, d)); }
+  for (const b of S.bunkers) { const d = polyDist(b, x, z, 2); if (d > -1) sand = Math.max(sand, smoothstep(-0.35, 0.35, d + wob * 0.4)); }
+  for (const w of S.water) { const d = polyDist(w, x, z, 2); if (d > -1) water = Math.max(water, smoothstep(-0.3, 0.3, d)); }
+  return { fairway: Math.max(fairway, 0), green, sand, water, tee };
+}
+
 // ---- geometry helpers --------------------------------------------------
 function polyline(L) {
   if (L._poly) return L._poly;
@@ -632,6 +796,7 @@ function spaceWeights(L, x, z) {
 /** The terrain height function everything is sampled from. */
 export function terrainHeight(L, x, z) {
   if (L.space) return spaceHeight(L, x, z);
+  if (L.shapes) return mapHeight(L, x, z);
   if (L.land) {
     let h = landHeight(L, x, z);
     for (const b of L.bunkers) {
@@ -691,6 +856,7 @@ export function terrainHeight(L, x, z) {
 /** Surface weights [fairway, green, sand, water] in 0..1, plus tee. */
 export function surfaceWeights(L, x, z) {
   if (L.space) return spaceWeights(L, x, z);
+  if (L.shapes) return mapWeights(L, x, z);
   const n = fbm(x / 16 + 5, z / 16 - 2, 3, 2, 0.5);
   const { d, t } = splineDist(L, x, z);
   let fairway = smoothstep(L.halfWidth + 3, L.halfWidth - 3, d + n * 6) * smoothstep(0.0, 0.03, t);
@@ -748,6 +914,11 @@ export function pathDist(L, x, z) {
  */
 export function fescueWeight(L, x, z) {
   if (L.space) return 0;
+  if (L.shapes) { // a mapped course is mown throughout; the long grass is the farmland outside its boundary
+    if (!L.shapes.boundary) return 0;
+    const out = -polyDist(L.shapes.boundary, x, z, 14); if (out < 2) return 0;
+    return smoothstep(2, 9, out) * smoothstep(0.25, 0.45, fbm(x / 46 + 11, z / 46 - 5, 3) * 0.5 + 0.5);
+  }
   const { d } = splineDist(L, x, z);
   const hw = L.halfWidth || 16;
   let w = smoothstep(hw + 7, hw + 17, d);
@@ -784,7 +955,7 @@ export class Course {
       const { d } = splineDist(L, x, z);
       const k = (j * M + i) * 4;
       if (L.space) { this.mask[k + 3] = 255; if (d > 90) continue; } // void by default; islands paint over it
-      else if (d > 120 && !ponds(L).some((q) => ellipseDist(x, z, q) < 2.5)) continue;
+      else if (!L.shapes && d > 120 && !ponds(L).some((q) => ellipseDist(x, z, q) < 2.5)) continue; // (a mapped course has shapes all over the world, not only along this hole)
       const s = surfaceWeights(L, x, z);
       const water = s.water, sand = s.sand * (1 - water), green = Math.max(s.green, s.tee) * (1 - water) * (1 - sand);
       const fairway = s.fairway * (1 - water) * (1 - sand) * (1 - green);

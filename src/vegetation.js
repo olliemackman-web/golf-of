@@ -2,7 +2,7 @@
 // the tree collision field the ball physics calls into.
 import * as THREE from 'three';
 import { mulberry32, fbm, smoothstep } from './noise.js';
-import { splineDist, ellipseDist, SURF, alongHole, ponds, fescueWeight, pathDist } from './courseData.js';
+import { splineDist, ellipseDist, SURF, alongHole, ponds, fescueWeight, pathDist, polyDist } from './courseData.js';
 import { BALL_R } from './physics.js';
 
 const windUniform = { value: 0 };
@@ -209,11 +209,16 @@ export function buildVegetation(course, tex, quality = {}) {
     cedar: (h) => ({ h, conifer: true, canopyR: h * 0.26, canopyRy: h * 0.45, canopyY: h * 0.55, trunkH: h * 0.2, trunkR: 0.3 + h * 0.035, density: 0.7, tint: 0.8, cards: Math.round(70 + h * 4) }),
     pine: (h) => ({ h, conifer: true, canopyR: h * 0.24, canopyY: h * 0.62, trunkH: h * 0.45, trunkR: 0.2 + h * 0.025, density: 0.45, tint: 0.9, cards: 60 }),
     poplar: (h) => ({ h, conifer: false, canopyR: h * 0.2, canopyRy: h * 0.42, canopyY: h * 0.56, trunkH: h * 0.3, trunkR: 0.2 + h * 0.02, density: 0.5, tint: 1.05, cards: Math.round(40 + h * 3) }),
+    thorn: (h) => ({ h, conifer: false, canopyR: h * 0.42, canopyRy: h * 0.4, canopyY: h * 0.6, trunkH: h * 0.3, trunkR: 0.12 + h * 0.012, density: 0.6, tint: 0.9, cards: Math.round(26 + h * 3) }),
+    // a pine in a close-planted stand: branches to the ground and a crown nothing gets through
+    wallpine: (h) => ({ h, conifer: true, canopyR: 2.1, canopyRy: h * 0.48, canopyY: h * 0.5, trunkH: h * 0.12, trunkR: 0.34, density: 1.6, tint: 0.78, cards: 30, crownFrom: 0.1, species: 'spruce' }),
     bush: (h) => ({ h, conifer: false, canopyR: h * 0.75, canopyRy: h * 0.55, canopyY: h * 0.55, trunkH: h * 0.3, trunkR: 0.1, density: 0.5, tint: 0.85, cards: 16 }),
   };
 
   // Hand-placed scenery (specimen trees, hedge + fence, lake reeds) when the hole has it
   if (sc) {
+    // trees, hedge bushes and thickets at exact spots (a course built from a map)
+    for (const t of sc.spots || []) { const o = (KIND[t.kind] || KIND.oak)(t.h || 10); if (course.surfaceAt(t.x, t.z).id === SURF.ROUGH) addTree(t.x, t.z, o.conifer, { ...o, noCollide: !!t.soft }); }
     for (const t of sc.trees || []) {
       const p = alongHole(L, t.at, t.off);
       const k = KIND[t.kind] || KIND.oak; const o = k(t.h || 12);
@@ -247,6 +252,12 @@ export function buildVegetation(course, tex, quality = {}) {
     const x = (rnd() - 0.5) * (L.size - 20), z = (rnd() - 0.5) * (L.size - 20);
     const { d, t } = splineDist(L, x, z);
     if (d < 75) continue;
+    if (sc && sc.boundary) {
+      // a mapped course: nothing is planted inside its boundary that the map does not show; outside, hedgerow trees
+      if (polyDist(sc.boundary, x, z, 20) > -16 || rnd() > 0.28) continue;
+      if (okSpot(x, z, 0)) { const o = rnd() < 0.8 ? KIND.oak(11 + rnd() * 7) : KIND.poplar(13 + rnd() * 6); addTree(x, z, o.conifer, { ...o, cards: Math.round(o.cards * 0.6) }); }
+      continue;
+    }
     if (sc && sc.woodland) {
       // parkland: keep the woods well away, except the belt behind the green
       const gdx = x - L.green.x, gdz = z - L.green.z;

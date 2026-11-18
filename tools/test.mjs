@@ -1,6 +1,7 @@
 // Headless checks that need no browser: `npm test` runs this.
 // Each check throws on failure so the exit code is non-zero.
-import { Course, holeFor, COURSES, HOLE_COUNT, SURF, splinePoint, splineLength, courseYards, alongHole } from '../src/courseData.js';
+import { Course, holeFor, COURSES, HOLE_COUNT, SURF, splinePoint, splineLength, courseYards, alongHole, polyDist } from '../src/courseData.js';
+const polyDistAt = (g, x, z) => polyDist(g.P, x, z, 8);
 import { Ball, CLUBS, shotParams, simulateShot, BALL_R } from '../src/physics.js';
 import { buildVegetation } from '../src/vegetation.js';
 import { mulberry32 } from '../src/noise.js';
@@ -17,17 +18,17 @@ function check(name, fn) {
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
-check('every course is 18 holes of par 72', () => {
+check('every course is 18 holes at its stated par (72, or 54 for the pitch and putt)', () => {
   COURSES.forEach((c, ci) => {
     let par = 0;
     for (let n = 0; n < HOLE_COUNT; n++) {
       const L = holeFor(ci, n);
       assert([3, 4, 5].includes(L.par), `${c.name} hole ${n + 1} par ${L.par}`);
-      assert(L.yards > 90 && L.yards < 650, `${c.name} hole ${n + 1} yards ${L.yards}`);
+      assert(L.yards > (c.par < 60 ? 50 : 90) && L.yards < 650, `${c.name} hole ${n + 1} yards ${L.yards}`);
       par += L.par;
     }
-    assert(par === 72, `${c.name} par ${par}`);
-    assert(courseYards(ci) > 5000, `${c.name} yardage ${courseYards(ci)}`);
+    assert(par === c.par && (par === 72 || par === 54), `${c.name} par ${par}, stated ${c.par}`);
+    assert(courseYards(ci) > (c.par < 60 ? 1800 : 5000), `${c.name} yardage ${courseYards(ci)}`);
   });
 });
 
@@ -142,23 +143,67 @@ function doable(courseId, waypoints) {
         for (const pm of [0.96, 1, 1.04]) for (const ym of [-0.02, 0, 0.02]) { tot++; if (safe(course, shoot(course, pos, c.club, Math.min(1, c.pw * pm), c.yaw + ym))) ok++; }
         if (ok / tot >= 0.75) { pick = { ...c, margin: ok / tot }; break; }
       }
-      assert(pick, `${L.name}: no safe shot from ${dPin.toFixed(0)}m out after ${legs} leg(s) (${cands.length} landings, none with margin)`);
+      assert(pick, `${L.name || 'hole ' + (n + 1)}: no safe shot from ${dPin.toFixed(0)}m out after ${legs} leg(s) (${cands.length} landings, none with margin)`);
       route.push(`${pick.club.id}@${Math.round(pick.pw * 100)}%${pick.onGreen ? ' green' : ` ${Math.round(pick.left)}m left`}`);
       pos = { x: pick.end.x, z: pick.end.z }; legs++;
     }
-    const line = `  ${String(n + 1).padStart(2)} ${L.name.padEnd(16)} par ${L.par} ${String(L.yards).padStart(3)}y: ${route.join(' → ')}`;
+    const line = `  ${String(n + 1).padStart(2)} ${(L.name || 'Hole ' + (n + 1)).padEnd(16)} par ${L.par} ${String(L.yards).padStart(3)}y: ${route.join(' → ')}`;
     console.log(line); report.push(line);
-    assert(home(pos), `${L.name}: not home after ${legs} legs (${route.join(', ')})`);
+    assert(home(pos), `${L.name || 'hole ' + (n + 1)}: not home after ${legs} legs (${route.join(', ')})`);
   }
   void flat;
 }
 
 check('every Starfall hole is doable: a route with margin reaches the green in par + 1', () => doable('starfall', (L) => L.space.islands));
 
+check("every Old Joe's hole is doable: a route with margin reaches the green in par + 1", () => doable('oldjoes', () => []));
+
 check('every Highland Lakes hole is doable: a route with margin reaches the green in par + 1', () => doable('highland', (L) => {
   const pts = []; for (let t = 0.25; t < 0.95; t += 0.07) { const p = alongHole(L, t, 0); pts.push({ x: p.x, z: p.z }); }
   return [...pts, ...(L.islands || [])];
 }));
+
+check("Old Joe's follows its map: nine real holes played twice, each tee and pin on its own mapped tee and green", () => {
+  const ci = COURSES.findIndex((c) => c.id === 'oldjoes'); assert(ci >= 0, "no Old Joe's course");
+  const want = [72, 100, 179, 97, 96, 82, 191, 136, 181]; // yards along each mapped hole line
+  for (let n = 0; n < HOLE_COUNT; n++) {
+    const L = holeFor(ci, n), course = new Course(L);
+    assert(L.par === 3, `hole ${n + 1} par ${L.par}`);
+    assert(Math.abs(L.yards - want[n % 9]) <= 1, `hole ${n + 1} is ${L.yards} yds, the map says ${want[n % 9]}`);
+    assert(course.surfaceAt(L.tee.x, L.tee.z).id === SURF.TEE, `hole ${n + 1}: the tee is not on a mapped tee`);
+    assert(course.surfaceAt(L.pin.x, L.pin.z).id === SURF.GREEN, `hole ${n + 1}: the pin is not on a green`);
+    assert(Math.hypot(L.pin.x - L.green.x, L.pin.z - L.green.z) < Math.max(L.green.rx, L.green.rz), `hole ${n + 1}: the pin is not on this hole's green`);
+    if (n >= 9) { const A = holeFor(ci, n - 9); assert(Math.hypot(A.pin.x - L.pin.x, A.pin.z - L.pin.z) > 3, `hole ${n + 1}: the pin has not moved for the second time round`); }
+  }
+  // holes 1 to 6: a bank about a foot high stands just off the green at the back, and is open at the front
+  for (let n = 0; n < 9; n++) {
+    const L = holeFor(ci, n), course = new Course(L), g = L.shapes.greens.find((q) => Math.hypot(q.cx - L.green.x, q.cz - L.green.z) < 1);
+    // how far the ground just off the green stands above the line from the green's edge to the ground beyond, along one bearing
+    const rise = (ang) => { let ridge = -9, edge = null, beyond = null; for (let r = 2; r < 20; r += 0.2) { const x = L.green.x + Math.sin(ang) * r, z = L.green.z + Math.cos(ang) * r, d = polyDistAt(g, x, z), y = course.heightAt(x, z); if (d > 0.2) edge = y; else if (d < -0.8 && d > -3.2) ridge = Math.max(ridge, y); else if (d < -4.6 && beyond == null) beyond = y; } return ridge - (edge + beyond) / 2; };
+    // behind and to the sides (the best of several bearings: a bunker may be cut into one of them), and straight back down the hole
+    const back = Math.max(...[-1.6, -1.1, -0.6, 0, 0.6, 1.1, 1.6].map((a) => rise(a + (g.berm ? Math.atan2(g.berm.ax, g.berm.az) + Math.PI : 0)))), front = rise(g.berm ? Math.atan2(g.berm.ax, g.berm.az) : Math.PI);
+    if (n < 6) assert(g.berm && back - front > 0.1, `hole ${n + 1}: the ground behind the green stands ${back.toFixed(2)} m proud, at the opening ${front.toFixed(2)} m`);
+    else assert(!g.berm, `hole ${n + 1} should have no bank`);
+  }
+  // the stand of pines in the middle of the course stops a ball: fire a spread of low and high shots through it
+  { const L = holeFor(ci, 1), course = new Course(L), field = buildVegetation(course, {}, { tufts: 10, reeds: 10 }).field;
+    const pines = L.scenery.spots.filter((s) => s.kind === 'wallpine' && Math.hypot(s.x - L.green.x, s.z - L.green.z) < 60); assert(pines.length >= 12, `only ${pines.length} pines in the stand by the 2nd green`);
+    const cx = pines.reduce((a, s) => a + s.x, 0) / pines.length, cz = pines.reduce((a, s) => a + s.z, 0) / pines.length; let through = 0, shots = 0;
+    for (const club of CLUBS.filter((c) => ['5I', '7I', '9I'].includes(c.id))) for (let a = 0; a < 6.28; a += 0.4) for (const off of [-3, 0, 3]) {
+      const sx = cx + Math.cos(a) * 30, sz = cz + Math.sin(a) * 30, yaw = Math.atan2(cx - sx, cz - sz) + off / 30; if (!course.inBounds(sx, sz)) continue;
+      const r = simulateShot(course, { x: sx, y: course.heightAt(sx, sz) + BALL_R, z: sz }, { x: Math.sin(yaw), z: Math.cos(yaw) }, shotParams(club, 0.8, 0, SURF.FAIRWAY), { trees: field, maxT: 30 });
+      shots++; if ((r.end.x - sx) * Math.sin(yaw) + (r.end.z - sz) * Math.cos(yaw) > 30 + 14) through++;
+    }
+    console.log(`  pine stand: ${pines.length} trees; ${through} of ${shots} shots fired through it came out the far side`);
+    assert(through / shots < 0.12, `${through} of ${shots} shots got through the pines`); }
+  // all nine greens, the bunkers and the pond are on the ground from any one hole
+  const L = holeFor(ci, 4), course = new Course(L); let greens = 0, wet = 0, sand = 0;
+  for (const g of L.shapes.greens) if (course.surfaceAt(g.cx, g.cz).id === SURF.GREEN) greens++;
+  for (const b of L.bunkers) if (course.surfaceAt(b.x, b.z).id === SURF.SAND) sand++;
+  for (const q of L.ponds) if (course.surfaceAt(q.x, q.z).id === SURF.WATER) wet++;
+  console.log(`  from hole 5: ${greens} greens, ${sand} bunkers and ${wet} pond on the ground`);
+  assert(greens === 9 && sand >= 8 && wet === 1, `expected 9 greens, the bunkers and the pond; got ${greens}, ${sand}, ${wet}`);
+});
 
 check('Highland Lakes: the ground sends the ball downhill', () => {
   const ci = COURSES.findIndex((c) => c.id === 'highland');
